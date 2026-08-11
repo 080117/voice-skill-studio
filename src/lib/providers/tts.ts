@@ -3,6 +3,7 @@ import type { Emotion, TtsConfig, TtsProviderId } from "../types";
 import { EMOTION_INSTRUCT } from "../emotion";
 import { emotionToneFreq, generateToneWav } from "../wav";
 import { normalizeBaseUrl } from "./llm";
+import { fetchWithProxy } from "./net";
 
 export interface CreateVoiceInput {
   config: TtsConfig;
@@ -99,7 +100,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
       form.append("name", `vss-${Date.now()}`);
       if (text) form.append("text", text);
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/voices`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/voices`, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
         body: form,
@@ -112,7 +113,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     },
     async synthesize({ config, voiceId, text, emotion }) {
       const input = emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。${text}` : text;
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
@@ -141,7 +142,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       form.append("train_mode", "fast");
       form.append("visibility", "private");
       form.append("voices", blobFromB64(audioBase64, mime), "reference.wav");
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/model`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/model`, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
         body: form,
@@ -153,7 +154,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       return { voiceId, model: config.model || "s2.1-pro-free", emotionControl: ["reference_audio"] };
     },
     async synthesize({ config, voiceId, text }) {
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -176,7 +177,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     emotionControl: ["emotion_param"],
     synthesize: async ({ config, voiceId, text, emotion, speed = 1 }) => {
       const base = normalizeBaseUrl(config.baseUrl || "https://api.minimax.chat/v1");
-      const res = await fetch(`${base}/t2a_v2`, {
+      const res = await fetchWithProxy(`${base}/t2a_v2`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
@@ -207,7 +208,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     supportsClone: false,
     emotionControl: ["none"],
     synthesize: async ({ config, voiceId, text, speed = 1 }) => {
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.openai.com/v1")}/audio/speech`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.openai.com/v1")}/audio/speech`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({ model: config.model || "tts-1", input: text, voice: voiceId, response_format: "mp3", speed }),

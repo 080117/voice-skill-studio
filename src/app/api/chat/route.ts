@@ -3,6 +3,7 @@ import { z } from "zod";
 import { chatCompletion } from "@/lib/providers/llm";
 import { synthesize } from "@/lib/providers/tts";
 import { tagEmotionWithLLM } from "@/lib/emotion";
+import { fetchWithProxy } from "@/lib/providers/net";
 import type { Emotion } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -48,9 +49,9 @@ export async function POST(req: NextRequest) {
       ],
       temperature: 0.8,
       maxTokens: 200,
-    });
+    }, fetchWithProxy);
 
-    const tag = await tagEmotionWithLLM(llm, reply);
+    const tag = await tagEmotionWithLLM(llm, reply, fetchWithProxy);
     const emotion: Emotion = tag.emotion;
 
     const out = await synthesize({ config: tts, voiceId: voice.providerVoiceId, text: reply, emotion, speed: 1 });

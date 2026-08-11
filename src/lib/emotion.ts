@@ -34,7 +34,7 @@ const TAG_SYSTEM_PROMPT = `你是语音情感标注器。给定一段文本，�
 只输出 JSON，不要其他内容。`;
 
 /** 调用 LLM 标注情感；失败时回退到“平静” */
-export async function tagEmotionWithLLM(llm: LlmConfig, text: string): Promise<EmotionTag> {
+export async function tagEmotionWithLLM(llm: LlmConfig, text: string, fetchImpl?: typeof fetch): Promise<EmotionTag> {
   const fallback: EmotionTag = { emotion: "平静", intensity: 0.5, style: EMOTION_DESCRIPTIONS.平静, reason: "LLM 标注失败，回退默认" };
   const trimmed = (text || "").trim();
   if (!trimmed) return fallback;
@@ -46,7 +46,7 @@ export async function tagEmotionWithLLM(llm: LlmConfig, text: string): Promise<E
         { role: "user", content: trimmed.slice(0, 2000) },
       ],
       temperature: 0.2,
-    });
+    }, fetchImpl);
     const parsed = parseEmotionJson(raw);
     if (!parsed) return fallback;
     const emotion: Emotion = (EMOTIONS as string[]).includes(parsed.emotion as string) ? (parsed.emotion as Emotion) : "平静";

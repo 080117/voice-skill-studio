@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { synthesize } from "@/lib/providers/tts";
 import { tagEmotionWithLLM } from "@/lib/emotion";
+import { fetchWithProxy } from "@/lib/providers/net";
 import type { Emotion, TtsProviderId } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
 
     let finalEmotion: Emotion = emotion ?? "平静";
     if (autoEmotion && llm) {
-      const tag = await tagEmotionWithLLM(llm, text);
+      const tag = await tagEmotionWithLLM(llm, text, fetchWithProxy);
       finalEmotion = tag.emotion;
     }
 

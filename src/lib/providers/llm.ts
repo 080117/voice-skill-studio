@@ -21,10 +21,10 @@ export function normalizeBaseUrl(baseUrl: string): string {
   return u;
 }
 
-export async function chatCompletion(opts: ChatCompletionOptions): Promise<string> {
+export async function chatCompletion(opts: ChatCompletionOptions, fetchImpl: typeof fetch = fetch): Promise<string> {
   const { baseUrl, apiKey, model, messages, temperature = 0.7, maxTokens, timeoutMs = 60000 } = opts;
   const url = `${normalizeBaseUrl(baseUrl)}/chat/completions`;
-  const res = await fetch(url, {
+  const res = await fetchImpl(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

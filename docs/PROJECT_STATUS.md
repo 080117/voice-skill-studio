@@ -62,6 +62,7 @@
 
 ## 8. 当前工作区状态（重要）
 - 代码已全部提交到 `main`（最新 `6f3aa30`），工作区干净（除临时调试文件已删除）。
+- **外部 API 走系统代理**：Fish Audio 等海外服务需代理才能访问（本机 127.0.0.1:7897）。`src/lib/providers/net.ts` 会在服务端自动读取 Windows 系统代理（或 `HTTPS_PROXY` 环境变量），并让 TTS/LLM 适配器经 `fetchWithProxy` 走代理；生产环境无代理时自动退化。
 - **本地 dev 服务器当前已停止**（端口 3000 无监听）。之前 UI 变丑的原因：`next build` 与 `next dev` 同时运行，共用的 `.next` 被生产构建覆盖，导致 dev 页面 CSS（app/layout.css）404、页面失去 Tailwind 样式。已删除 `.next` 待重启。
 - **重启 dev 服务器的正确方法**（注意：`Start-Process -WorkingDirectory` 传中文路径会乱码，需先 `Set-Location` 再启动）：
   ```powershell
