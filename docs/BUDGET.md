@@ -18,6 +18,7 @@
 | cc-switch | 免费工具 |
 | Cursor | 免费版即可（仅编辑器） |
 | ChatGPT 套餐 | 不用升级（Codex 走 DeepSeek 自定义 provider） |
+| OpenCode Go（已订阅） | 文本 LLM（情感标注/机器人对话），已加网站预设，无需额外充值 |
 | 国外模型（Gemini/Grok/OpenAI） | 默认不买；确需时先问用户 |
 
 ## 环境变量（余额查询用，勿提交）

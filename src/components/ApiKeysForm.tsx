@@ -2,7 +2,27 @@
 
 import { useState } from "react";
 import type { ApiKeysState, TtsProviderId } from "@/lib/types";
-import { DEFAULT_TTS_BASE_URLS, EMPTY_KEYS, TTS_PROVIDER_META, TTS_PROVIDER_LABELS } from "@/lib/types";
+import {
+  DEFAULT_TTS_BASE_URLS,
+  EMPTY_KEYS,
+  LLM_PRESETS,
+  TTS_PROVIDER_META,
+  TTS_PROVIDER_OPTIONS,
+  TTS_PROVIDER_LABELS,
+} from "@/lib/types";
+
+const RECOMMENDED_LLM = LLM_PRESETS[0];
+
+/** 由已保存的 baseUrl/model 反推当前选中的 LLM 预设 id */
+function presetIdFor(keys: ApiKeysState): string {
+  if (keys.llmBaseUrl || keys.llmModel) {
+    const hit = LLM_PRESETS.find(
+      (p) => p.id !== "custom" && p.baseUrl === keys.llmBaseUrl && p.model === keys.llmModel,
+    );
+    return hit?.id ?? "custom";
+  }
+  return RECOMMENDED_LLM.id;
+}
 
 export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: (k: ApiKeysState) => void }) {
   const [open, setOpen] = useState(false);
@@ -12,9 +32,17 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
   const set = (patch: Partial<ApiKeysState>) => onChange({ ...keys, ...patch });
 
   const onProviderChange = (provider: TtsProviderId) => {
-    const baseUrl = keys.ttsBaseUrl || DEFAULT_TTS_BASE_URLS[provider];
-    set({ ttsProvider: provider, ttsBaseUrl: baseUrl });
+    set({ ttsProvider: provider, ttsBaseUrl: DEFAULT_TTS_BASE_URLS[provider] });
   };
+
+  const onLlmPresetChange = (id: string) => {
+    if (id === "custom") return; // 保留当前值，展开高级输入
+    const p = LLM_PRESETS.find((x) => x.id === id);
+    if (p) set({ llmBaseUrl: p.baseUrl, llmModel: p.model });
+  };
+
+  const llmPresetId = presetIdFor(keys);
+  const isCustomLlm = llmPresetId === "custom";
 
   const inputCls =
     "w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 outline-none focus:border-blue-500";
@@ -32,23 +60,23 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
       {open && (
         <div className="grid gap-4 border-t border-neutral-800 px-4 py-4 md:grid-cols-2">
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">LLM（情感标注 / 机器人对话）</h3>
-              <button
-                type="button"
-                onClick={() => set({ llmBaseUrl: "https://opencode.ai/zen/go/v1", llmModel: "glm-5" })}
-                className="text-xs text-blue-400 hover:underline"
-                title="填入 OpenCode Go（GLM-5 / Kimi K2.5 走 OpenAI 兼容接口）；TTS 声音克隆仍需单独的服务商 key"
-              >
-                OpenCode Go 预设
-              </button>
-            </div>
-            <input className={inputCls} placeholder="Base URL，如 https://opencode.ai/zen/go/v1" value={keys.llmBaseUrl} onChange={(e) => set({ llmBaseUrl: e.target.value })} />
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">LLM（情感标注 / 机器人对话）</h3>
+            <select className={inputCls} value={llmPresetId} onChange={(e) => onLlmPresetChange(e.target.value)}>
+              {LLM_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+            {isCustomLlm && (
+              <>
+                <input className={inputCls} placeholder="Base URL，如 https://api.deepseek.com/v1" value={keys.llmBaseUrl} onChange={(e) => set({ llmBaseUrl: e.target.value })} />
+                <input className={inputCls} placeholder="模型名，如 deepseek-chat" value={keys.llmModel} onChange={(e) => set({ llmModel: e.target.value })} />
+              </>
+            )}
             <div className="relative">
               <input
                 className={inputCls}
                 type={showLlmKey ? "text" : "password"}
-                placeholder="API Key（DeepSeek / Kimi / GLM / Qwen…）"
+                placeholder="API Key"
                 value={keys.llmApiKey}
                 onChange={(e) => set({ llmApiKey: e.target.value })}
               />
@@ -56,13 +84,13 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
                 {showLlmKey ? "隐藏" : "显示"}
               </button>
             </div>
-            <input className={inputCls} placeholder="模型名，如 deepseek-chat / moonshot-v1-8k / glm-4-flash" value={keys.llmModel} onChange={(e) => set({ llmModel: e.target.value })} />
+            {!isCustomLlm && <p className="text-xs text-neutral-500">选好服务后只需填 Key，Base URL 和模型名已自动填好。</p>}
           </div>
 
           <div className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">TTS / 声音克隆</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">声音克隆 / TTS</h3>
             <select className={inputCls} value={keys.ttsProvider} onChange={(e) => onProviderChange(e.target.value as TtsProviderId)}>
-              {(Object.keys(TTS_PROVIDER_LABELS) as TtsProviderId[]).map((p) => (
+              {TTS_PROVIDER_OPTIONS.map((p) => (
                 <option key={p} value={p}>{TTS_PROVIDER_LABELS[p]}</option>
               ))}
             </select>
@@ -78,20 +106,21 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
                 {showTtsKey ? "隐藏" : "显示"}
               </button>
             </div>
-            <input className={inputCls} placeholder="Base URL（默认已按 provider 填好）" value={keys.ttsBaseUrl} onChange={(e) => set({ ttsBaseUrl: e.target.value })} />
-            <input className={inputCls} placeholder="模型（可选，如 CosyVoice2-0.5B）" value={keys.ttsModel} onChange={(e) => set({ ttsModel: e.target.value })} />
             <p className="text-xs text-neutral-500">
               {keys.ttsProvider === "mock"
                 ? "演示模式：不需要 key，生成测试音验证全流程。"
                 : TTS_PROVIDER_META[keys.ttsProvider].supportsClone
-                  ? "该服务商支持上传音频创建声纹。"
+                  ? "该服务商支持上传音频创建声纹，只需填 Key。"
                   : "该服务商不支持 API 上传克隆：请在控制台先完成声音复刻，再在拟合页输入已有 voice_id。"}
             </p>
+            {keys.ttsProvider === "siliconflow" && (
+              <p className="text-xs text-neutral-500">小提示：SiliconFlow 的 key 也可以填到上方 LLM 里，同一把 key 两处通用。</p>
+            )}
           </div>
 
           <div className="md:col-span-2 flex gap-2">
             <button onClick={() => onChange(EMPTY_KEYS)} className="rounded-md border border-neutral-700 px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800">
-              清空全部
+              清空 API Key（保留服务选择）
             </button>
           </div>
         </div>

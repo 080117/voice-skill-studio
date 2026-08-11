@@ -65,10 +65,33 @@ export interface ApiKeysState {
   ttsModel: string;
 }
 
+export interface LlmPreset {
+  id: string;
+  label: string;
+  baseUrl: string;
+  model: string;
+}
+
+/** LLM 服务预设：选好后自动填 Base URL 与模型名，用户只需填 Key */
+export const LLM_PRESETS: LlmPreset[] = [
+  { id: "opencode-go", label: "OpenCode Go（GLM-5）", baseUrl: "https://opencode.ai/zen/go/v1", model: "glm-5" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { id: "siliconflow", label: "硅基流动 SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
+  { id: "zhipu", label: "智谱 GLM（免费）", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.7-flash" },
+  { id: "custom", label: "自定义（高级）", baseUrl: "", model: "" },
+];
+
+/** 默认推荐的 LLM 预设（OpenCode Go，用户已订阅） */
+export const DEFAULT_LLM_PRESET: LlmPreset = LLM_PRESETS[0];
+
+/** TTS 下拉只展示这几个；minimax/openai 保留代码供后续扩展 */
+export const TTS_PROVIDER_OPTIONS: TtsProviderId[] = ["siliconflow", "fishaudio", "mock"];
+
+/** 空状态：服务预选好，只需填 Key */
 export const EMPTY_KEYS: ApiKeysState = {
-  llmBaseUrl: "",
+  llmBaseUrl: DEFAULT_LLM_PRESET.baseUrl,
   llmApiKey: "",
-  llmModel: "",
+  llmModel: DEFAULT_LLM_PRESET.model,
   ttsProvider: "siliconflow",
   ttsApiKey: "",
   ttsBaseUrl: "",
