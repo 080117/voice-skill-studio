@@ -10,6 +10,25 @@ const MAX_BYTES = 200 * 1024 * 1024;
 const MAX_URLS = 8;
 const schema = z.object({ urls: z.array(z.string().url().max(2048)).min(1).max(MAX_URLS) });
 
+/** 直链下载的内容是否像可解码的音频/视频（用魔数快速判断，避免把网页 HTML 喂给 ffmpeg） */
+function looksLikeMedia(buf: Buffer): boolean {
+  if (!buf || buf.length < 12) return false;
+  const h = buf.subarray(0, 12);
+  // mp4 / m4a / mov：offset 4 处为 "ftyp"
+  if (h.toString("latin1", 4, 8) === "ftyp") return true;
+  // webm / mkv：1A 45 DF A3
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return true;
+  // mp3：ID3 标签或 0xFF Ex 帧头
+  if (h.toString("latin1", 0, 3) === "ID3") return true;
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true;
+  // wav：RIFF....WAVE
+  if (h.toString("latin1", 0, 4) === "RIFF" && h.toString("latin1", 8, 12) === "WAVE") return true;
+  // flac / ogg
+  if (h.toString("latin1", 0, 4) === "fLaC") return true;
+  if (h.toString("latin1", 0, 4) === "OggS") return true;
+  return false;
+}
+
 async function downloadUrl(url: string): Promise<Buffer> {
   const res = await fetchWithProxy(url, {
     redirect: "follow",
@@ -36,40 +55,55 @@ async function downloadUrl(url: string): Promise<Buffer> {
   return Buffer.concat(chunks.map((c) => Buffer.from(c)));
 }
 
+function okResult(url: string, source: string, wav: Buffer, durationSec: number, segments: unknown[]): Record<string, unknown> {
+  return { url, ok: true, audioBase64: wav.toString("base64"), mime: "audio/wav", durationSec, segments, source };
+}
+
 async function processUrl(url: string): Promise<Record<string, unknown>> {
   try {
     let raw: Buffer | null = null;
     let source = "direct";
+    let directErr: Error | null = null;
+
+    // 1) 尝试直链下载；内容不是可识别媒体时视为失败
     try {
-      raw = await downloadUrl(url);
-    } catch (err) {
-      // 直链失败时尝试 yt-dlp（YouTube / B 站等，本机装了才可用）
-      const yt = await hasYtDlp();
-      if (yt) {
-        try {
-          raw = await downloadWithYtDlp(url, MAX_BYTES, getProxyUrl());
-          source = "yt-dlp";
-        } catch (ytErr) {
-          throw new Error(`${(err as Error).message}（yt-dlp 也失败：${(ytErr as Error).message}）`);
-        }
+      const candidate = await downloadUrl(url);
+      if (looksLikeMedia(candidate)) {
+        raw = candidate;
       } else {
-        throw new Error(`${(err as Error).message}（如为 YouTube/B 站链接，请先安装 yt-dlp）`);
+        directErr = new Error("直链内容不是可识别的音频/视频（可能是网页，已切换解析器）");
+      }
+    } catch (err) {
+      directErr = err as Error;
+    }
+
+    // 2) 直链失败 → yt-dlp
+    if (!raw) {
+      if (!(await hasYtDlp())) {
+        throw new Error(`${directErr?.message ?? "下载失败"}（如为 YouTube/B 站链接，请先安装 yt-dlp）`);
+      }
+      try {
+        raw = await downloadWithYtDlp(url, MAX_BYTES, getProxyUrl());
+        source = "yt-dlp";
+      } catch (ytErr) {
+        throw new Error(`${directErr?.message ?? "下载失败"}（yt-dlp 也失败：${(ytErr as Error).message}）`);
       }
     }
-    if (!raw || raw.length === 0) throw new Error("未能获取视频内容");
 
-    const { wav, durationSec, segments } = await extractVideoAudio(raw);
-    if (durationSec <= 0) throw new Error("无法从视频中解析出音频，请确认链接可直接访问");
-
-    return {
-      url,
-      ok: true,
-      audioBase64: wav.toString("base64"),
-      mime: "audio/wav",
-      durationSec,
-      segments,
-      source,
-    };
+    // 3) 直链下载成功但 ffmpeg 解析失败 → 再用 yt-dlp 重试一次
+    try {
+      const { wav, durationSec, segments } = await extractVideoAudio(raw);
+      if (durationSec <= 0) throw new Error("无法从视频中解析出音频，请确认链接可直接访问");
+      return okResult(url, source, wav, durationSec, segments);
+    } catch (extractErr) {
+      if (source === "direct" && (await hasYtDlp())) {
+        const ytRaw = await downloadWithYtDlp(url, MAX_BYTES, getProxyUrl());
+        const { wav, durationSec, segments } = await extractVideoAudio(ytRaw);
+        if (durationSec <= 0) throw new Error("无法从视频中解析出音频");
+        return okResult(url, "yt-dlp", wav, durationSec, segments);
+      }
+      throw extractErr;
+    }
   } catch (err) {
     return { url, ok: false, error: (err as Error).message };
   }

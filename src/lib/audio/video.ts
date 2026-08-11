@@ -77,7 +77,7 @@ export function runFfmpeg(args: string[], input: Buffer, maxOut = 200 * 1024 * 1
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error(`ffmpeg exit ${code}: ${Buffer.concat(errChunks).toString().slice(0, 400)}`));
+      else reject(new Error(`ffmpeg exit ${code}: ${Buffer.concat(errChunks).toString().slice(-400)}`));
     });
     child.stdin.write(input);
     child.stdin.end();

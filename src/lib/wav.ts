@@ -13,13 +13,35 @@ export interface WavInfo {
 export function parseWav(buf: Buffer): WavInfo | null {
   if (buf.length < 44) return null;
   if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") return null;
-  const audioFormat = buf.readUInt16LE(20);
-  if (audioFormat !== 1) return null; // 仅支持 PCM
-  const channels = buf.readUInt16LE(22);
-  const sampleRate = buf.readUInt32LE(24);
-  const bitsPerSample = buf.readUInt16LE(34);
-  const dataSize = buf.readUInt32LE(40);
-  const dataOffset = 44;
+  let offset = 12;
+  let audioFormat = 0;
+  let channels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataOffset = -1;
+  let dataSize = 0;
+  // 逐个 chunk 扫描，兼容 ffmpeg 输出的 LIST/INFO 等额外元数据头
+  while (offset + 8 <= buf.length) {
+    const id = buf.toString("ascii", offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    const payload = offset + 8;
+    if (id === "fmt " && size >= 16) {
+      audioFormat = buf.readUInt16LE(payload);
+      channels = buf.readUInt16LE(payload + 2);
+      sampleRate = buf.readUInt32LE(payload + 4);
+      bitsPerSample = buf.readUInt16LE(payload + 14);
+    } else if (id === "data") {
+      dataOffset = payload;
+      dataSize = size;
+      break;
+    }
+    offset = payload + size + (size % 2); // chunk 按 2 字节对齐
+    if (offset <= payload) break; // 防止畸形头死循环
+  }
+  if (dataOffset < 0 || audioFormat !== 1 || sampleRate <= 0 || channels <= 0) return null;
+  // 流式 WAV（ffmpeg 输出到管道等不可 seek 目标时）data 大小写为 0xFFFFFFFF 占位，用实际剩余字节数
+  if (dataSize === 0xffffffff || dataOffset + dataSize > buf.length) dataSize = buf.length - dataOffset;
+  if (dataSize <= 0) return null;
   const durationSec = sampleRate > 0 ? dataSize / (sampleRate * channels * (bitsPerSample / 8)) : 0;
   let sum = 0;
   let count = 0;
@@ -34,7 +56,6 @@ export function parseWav(buf: Buffer): WavInfo | null {
   const rms = count > 0 ? Math.sqrt(sum / count) : 0;
   return { channels, sampleRate, bitsPerSample, dataBytes: dataSize, durationSec, rms };
 }
-
 /** 生成一段正弦波 WAV（演示模式 / 测试用） */
 export function generateToneWav(opts: { freq?: number; durationSec?: number; sampleRate?: number; amplitude?: number } = {}): Buffer {
   const { freq = 440, durationSec = 1.2, sampleRate = 24000, amplitude = 0.25 } = opts;
