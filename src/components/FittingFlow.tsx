@@ -376,6 +376,11 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
               ⬇ 下载 Skill 包
             </button>
           </div>
+          {profile.provider === "mock" && (
+            <p className="text-xs text-amber-400">
+              ⚠ 演示模式：试听听到的是测试音，不是你的声音；Skill 包里的 voice_id 不可用于真实机器人。请换真实 TTS key（硅基流动 / Fish Audio 等）后再拟合。
+            </p>
+          )}
 
           <div className="grid gap-3 border-t border-neutral-800 pt-3 md:grid-cols-[1fr_auto]">
             <input className={inputCls} value={previewText} onChange={(e) => setPreviewText(e.target.value)} placeholder="输入要试听的文本" />
