@@ -12,8 +12,9 @@ import { buildSkillPack, downloadBlob } from "@/lib/skillpack";
 import { Recorder } from "./Recorder";
 import { Uploader } from "./Uploader";
 
+// 加长范读：覆盖常见声母/韵母、四声与轻重读，含叙述/感叹/疑问等语气，约 1 分钟
 const PASSAGE =
-  "今天天气真好，阳光洒在窗台上。我喜欢听雨声，也喜欢看云慢慢飘过。生活总有起伏，但只要坚持，就一定能看到希望。我们一起去散步吧，好吗？";
+  "清晨的阳光洒在窗前，微风轻轻吹过。我坐在书桌旁，翻开一本厚厚的日记，回忆起过去的点点滴滴。那年春天，我们一起去爬山，路边的花开得特别灿烂，漫山遍野都是彩色的。你说，生活就像一条河，有时平静，有时汹涌，但总要向前流淌。后来我们各奔东西，各自忙碌，偶尔在深夜里想起那些温暖的日子。今天窗外又下起了小雨，滴滴答答，像极了我此刻的心情。生活总有起伏，但只要心里有光，就一定能走过每一个路口。明天，又是一个新的开始，我们一起去散散步，好吗？";
 
 type Phase = "idle" | "denoising" | "denoised" | "creating" | "created";
 
@@ -263,6 +264,9 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         </div>
       ) : mode === "reading" ? (
         <div className="flex flex-col gap-3 rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+          <p className="text-xs text-neutral-400">
+            请完整朗读一遍（约 1 分钟）：音频越长、覆盖音素越全，拟合效果越好（≥30s 最佳）。
+          </p>
           <p className="text-sm leading-relaxed text-neutral-200">{PASSAGE}</p>
           <Recorder onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
         </div>
