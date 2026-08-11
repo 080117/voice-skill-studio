@@ -92,3 +92,21 @@ export async function analyzeBlob(blob: Blob): Promise<AudioAnalysis | null> {
     ctx.close().catch(() => {});
   }
 }
+
+/** 截取音频前 maxSec 秒（24k mono wav），用于控制参考音频长度，避免服务端超时（HTTP 524） */
+export async function truncateAudio(blob: Blob, maxSec: number): Promise<Blob> {
+  const ctx = new AudioContext({ sampleRate: 24000 });
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const length = Math.max(1, Math.min(decoded.length, Math.floor(24000 * maxSec)));
+    const offCtx = new OfflineAudioContext(1, length, 24000);
+    const src = offCtx.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offCtx.destination);
+    src.start(0);
+    const rendered = await offCtx.startRendering();
+    return encodeWavPcm(rendered);
+  } finally {
+    ctx.close().catch(() => {});
+  }
+}

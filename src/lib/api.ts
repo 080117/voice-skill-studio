@@ -85,7 +85,7 @@ export async function chat(payload: {
 export function keysToTts(keys: ApiKeysState): TtsConfig {
   return {
     provider: keys.ttsProvider,
-    apiKey: keys.ttsApiKey,
+    apiKey: keys.ttsApiKey.trim(),
     baseUrl: keys.ttsBaseUrl || undefined,
     model: keys.ttsModel || undefined,
   };
@@ -93,5 +93,5 @@ export function keysToTts(keys: ApiKeysState): TtsConfig {
 
 export function keysToLlm(keys: ApiKeysState): LlmConfig | null {
   if (!keys.llmBaseUrl || !keys.llmApiKey || !keys.llmModel) return null;
-  return { baseUrl: keys.llmBaseUrl, apiKey: keys.llmApiKey, model: keys.llmModel };
+  return { baseUrl: keys.llmBaseUrl, apiKey: keys.llmApiKey.trim(), model: keys.llmModel };
 }

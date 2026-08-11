@@ -59,7 +59,8 @@ function blobFromB64(b64: string, mime: string): Blob {
 
 async function readError(res: Response, tag: string): Promise<string> {
   const t = await res.text().catch(() => "");
-  return `${tag} 请求失败 HTTP ${res.status}: ${t.slice(0, 300)}`;
+  const hint = res.status === 401 ? "（API Key 无效或已过期，请检查是否有多余空格/换行、是否以 sk- 开头）" : "";
+  return `${tag} 请求失败 HTTP ${res.status}: ${t.slice(0, 300)}${hint}`;
 }
 
 function minimaxEmotion(e?: Emotion): string | undefined {

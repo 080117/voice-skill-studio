@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { ApiKeysState, Emotion, VoiceMode, VoiceProfile } from "@/lib/types";
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
-import { analyzeBlob, denoiseClient, type AudioAnalysis } from "@/lib/audio/denoise-client";
+import { analyzeBlob, denoiseClient, truncateAudio, type AudioAnalysis } from "@/lib/audio/denoise-client";
 import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
 import { formatSeg, mergeSegments, mergeSegmentsMulti, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
 import { getRefAudio, newVoiceId, putRefAudio } from "@/lib/client-store";
@@ -30,6 +30,7 @@ type Phase = "idle" | "denoising" | "denoised" | "creating" | "created";
 
 export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVoiceCreated: (v: VoiceProfile) => void }) {
   const supportsClone = TTS_PROVIDER_META[keys.ttsProvider].supportsClone;
+  const maxRefSec = keys.ttsProvider === "siliconflow" ? 29 : 60;
   const [mode, setMode] = useState<VoiceMode>("reading");
   const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
   const [denoisedBlob, setDenoisedBlob] = useState<Blob | null>(null);
@@ -47,6 +48,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [videoUrls, setVideoUrls] = useState("");
   const [videoBusy, setVideoBusy] = useState(false);
   const [videoError, setVideoError] = useState("");
+  const [sourceNotice, setSourceNotice] = useState("");
   const [videoSources, setVideoSources] = useState<VideoSource[]>([]);
   const [selectedSegs, setSelectedSegs] = useState<number[]>([]);
 
@@ -133,9 +135,10 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       if (sources.length === 0) throw new Error("没有可用的片段");
       const merged =
         sources.length === 1
-          ? await mergeSegments(sources[0].blob, sources[0].segments)
-          : await mergeSegmentsMulti(sources);
-      onAudio(merged); // 进入原有 去噪 → 建声纹 → Skill 包 流程
+          ? await mergeSegments(sources[0].blob, sources[0].segments, maxRefSec)
+          : await mergeSegmentsMulti(sources, maxRefSec);
+      setSourceNotice(merged.capped ? `选中片段合计过长，参考音频已截取为 ${merged.totalSec.toFixed(0)}s（上限 ${maxRefSec}s）` : "");
+      await onAudio(merged.blob); // 进入原有 去噪 → 建声纹 → Skill 包 流程
     } catch (e) {
       setVideoError((e as Error).message);
     } finally {
@@ -167,12 +170,23 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     return !!sourceBlob;
   }, [keys.ttsProvider, keys.ttsApiKey, supportsClone, existingVoiceId, sourceBlob]);
 
-  const onAudio = (blob: Blob) => {
+  const onAudio = async (blob: Blob) => {
     setSourceBlob(blob);
     setDenoisedBlob(null);
     setPhase("idle");
     setError("");
     setProfile(null);
+    setSourceNotice("");
+    try {
+      const dur = await analyzeBlob(blob);
+      if (dur && dur.durationSec > maxRefSec) {
+        const cut = await truncateAudio(blob, maxRefSec);
+        setSourceBlob(cut);
+        setSourceNotice(`参考音频过长（${dur.durationSec.toFixed(0)}s），已自动截取前 ${maxRefSec}s（避免服务端超时）`);
+      }
+    } catch {
+      // 分析失败则保持原样
+    }
   };
 
   const runDenoise = async () => {
@@ -228,6 +242,10 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     setPhase("creating");
     try {
       const ref = denoisedBlob ?? sourceBlob;
+      const refDur = analysis?.durationSec ?? (await analyzeBlob(ref).catch(() => null))?.durationSec;
+      if (refDur && refDur > maxRefSec + 2) {
+        throw new Error(`参考音频过长（${refDur.toFixed(0)}s，上限 ${maxRefSec}s）。超长音频会导致服务端超时（HTTP 524），请减少选中片段或换用较短音频。`);
+      }
       const audioBase64 = await blobToBase64(ref);
       const profile = await createVoice({
         audioBase64,
@@ -409,6 +427,8 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       {!keys.ttsApiKey && keys.ttsProvider !== "mock" && (
         <p className="text-xs text-amber-400">请先在「模型 API」面板填写 TTS API Key（演示模式除外）。</p>
       )}
+
+      {sourceNotice && <p className="text-xs text-amber-400">{sourceNotice}</p>}
 
       {/* 处理按钮 */}
       {sourceBlob && (
