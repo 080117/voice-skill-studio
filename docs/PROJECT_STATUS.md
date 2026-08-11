@@ -1,6 +1,6 @@
 # Voice Skill Studio · 项目内容与进度（2026-08-11）
 
-> 本文件用于快速了解项目现状。更新于 2026-08-11（代码最新 commit `6f3aa30`）。
+> 本文件用于快速了解项目现状。更新于 2026-08-11（代码最新 commit `fee6abd`）。
 
 ## 1. 项目一句话
 声音拟合网站：朗读文本或上传音频/视频链接 → 自动去噪 → 拟合声纹 → 下载可安装的「声音 Skill 包」，并内置「带情感语音的机器人演示」。全部模型 API 由用户自带（BYOK），key 仅存浏览器 localStorage。
@@ -41,7 +41,7 @@
 - 主要组件：`ApiKeysForm`（模型 API 配置）、`FittingFlow`（拟合流程）、`ChatBot`、`VoiceLibrary`、`Recorder`、`Uploader`。
 - 文档：`docs/`（ROADMAP / ACCEPTANCE / BUDGET / REVERT / tasks/M0-M4 / backups 配置快照）。
 
-## 5. 模型 API 配置（刚简化完，commit 6f3aa30）
+## 5. 模型 API 配置（刚简化完，commit fee6abd）
 - **LLM**：服务预设下拉——OpenCode Go（GLM-5，默认）、DeepSeek、硅基流动、智谱 GLM（免费）、自定义（高级）。选服务自动填 Base URL + 模型名，只填 Key。
 - **TTS/声音克隆**：只留 3 个——硅基流动（CosyVoice，默认）、Fish Audio、演示模式。MiniMax/OpenAI TTS 从界面移除（代码保留，后续可加回）。
 - 首次打开自动预选 OpenCode Go + 硅基流动，只需粘 2 个 Key。
@@ -49,7 +49,7 @@
 
 ## 6. 验证状态
 - `npm run typecheck` ✅
-- `npm test`（14 个单测）✅：wav、emotion、tts provider、video、skillpack
+- `npm test`（18 个单测）✅：wav、emotion、tts provider、video、skillpack（含 SiliconFlow 新接口回归）
 - `npm run build` ✅
 - Playwright E2E 全链路（录音→拟合→试听→对话→下载 zip）✅（自测通过，未入库）
 - CI：GitHub Actions 工作流已配置（build + lint + test + e2e）
@@ -61,9 +61,10 @@
 - 规则：余额不足/429 时先告知用户充值，不擅自降级；`node scripts/check-budget.mjs` 查余额（需配 `KEY_*` 环境变量）。
 
 ## 8. 当前工作区状态（重要）
-- 代码已全部提交到 `main`（最新 `6f3aa30`），工作区干净（除临时调试文件已删除）。
+- 代码已全部提交到 `main`（最新 `fee6abd`），工作区干净（除临时调试文件已删除）。
+- **SiliconFlow 创建声纹 404 已修复（fee6abd）**：旧接口 `/v1/audio/voices` 已下线，改用 `POST /v1/uploads/audio/voice`（multipart：file/model/customName/text），响应 `uri` 即声纹 ID；默认模型修正为 `FunAudioLLM/CosyVoice2-0.5B`；情感指令走 `<|endofprompt|>` 后缀；已加 3 个回归单测。
 - **外部 API 走系统代理**：Fish Audio 等海外服务需代理才能访问（本机 127.0.0.1:7897）。`src/lib/providers/net.ts` 会在服务端自动读取 Windows 系统代理（或 `HTTPS_PROXY` 环境变量），并让 TTS/LLM 适配器经 `fetchWithProxy` 走代理；生产环境无代理时自动退化。
-- **本地 dev 服务器当前已停止**（端口 3000 无监听）。之前 UI 变丑的原因：`next build` 与 `next dev` 同时运行，共用的 `.next` 被生产构建覆盖，导致 dev 页面 CSS（app/layout.css）404、页面失去 Tailwind 样式。已删除 `.next` 待重启。
+- **本地 dev 服务器运行中**（http://localhost:3000，Hidden 后台启动）。注意：`next build` 与 `next dev` 不要同时运行，共用的 `.next` 会被覆盖，导致 dev 页面 CSS 404、失去 Tailwind 样式；本次按 停 dev → build → 删 .next → 重启 dev 处理，页面已恢复。
 - **重启 dev 服务器的正确方法**（注意：`Start-Process -WorkingDirectory` 传中文路径会乱码，需先 `Set-Location` 再启动）：
   ```powershell
   Set-Location "C:\Users\29234\Documents\ChatGPT\声音"
@@ -73,7 +74,7 @@
   然后访问 http://localhost:3000。
 
 ## 9. 下一步（按优先级）
-1. 重启本地 dev 服务器，确认 UI 恢复正常（Tailwind 样式加载）。
+1. ~~重启本地 dev 服务器，确认 UI 恢复正常~~ ✅ 已完成：dev 运行中，首页 200，`/api/voices` 路由正常（空 body 返回 400 校验）。
 2. 用户本地实测：填 OpenCode Go key（LLM）+ SiliconFlow key（TTS/克隆）→ 试音质与情感；出 3 组 A/B 对照音频（ACCEPTANCE M2 待办）。
 3. 部署：安装并登录 `gh` CLI → 推送 GitHub 仓库 `voice-skill-studio` → Vercel 导入（注意 Hobby 10s 函数限制，已用流式/分块规避）。
 4. 可选：说话人分离模型做视频多角色自动区分（需用户同意）；阿里云百炼 CosyVoice 适配器（用户确认后加）。
