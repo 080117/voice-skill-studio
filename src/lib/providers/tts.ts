@@ -98,30 +98,31 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     async createVoice({ config, audioBase64, mime, text }) {
       const form = new FormData();
       form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
-      form.append("name", `vss-${Date.now()}`);
+      form.append("model", config.model || "FunAudioLLM/CosyVoice2-0.5B");
+      form.append("customName", `vss-${Date.now()}`);
       if (text) form.append("text", text);
-      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/voices`, {
+      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/uploads/audio/voice`, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
         body: form,
       });
       if (!res.ok) throw new Error(await readError(res, "SiliconFlow 创建声纹"));
       const json = (await res.json()) as any;
-      const voiceId = json?.voice_id ?? json?.data?.voice_id ?? json?.id;
-      if (!voiceId) throw new Error("SiliconFlow 创建声纹响应缺少 voice_id");
-      return { voiceId, model: config.model, emotionControl: ["instruct_text"] };
+      const voiceId = json?.uri ?? json?.voice_id ?? json?.data?.voice_id ?? json?.id;
+      if (!voiceId) throw new Error("SiliconFlow 创建声纹响应缺少 uri");
+      return { voiceId, model: config.model || "FunAudioLLM/CosyVoice2-0.5B", emotionControl: ["instruct_text"] };
     },
-    async synthesize({ config, voiceId, text, emotion }) {
-      const input = emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。${text}` : text;
+    async synthesize({ config, voiceId, text, emotion, speed = 1 }) {
+      const input = emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。<|endofprompt|>${text}` : text;
       const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
-          model: config.model || "CosyVoice2-0.5B",
+          model: config.model || "FunAudioLLM/CosyVoice2-0.5B",
           input,
           voice: voiceId,
           response_format: "mp3",
-          speed: 1,
+          speed,
         }),
       });
       if (!res.ok) throw new Error(await readError(res, "SiliconFlow 合成"));
