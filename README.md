@@ -28,6 +28,10 @@ npm run build      # 生产构建
 见 `docs/ROADMAP.md`。
 
 
+## 依赖
+- ffmpeg（本机已装，用于去噪/视频抽音频/分段）
+- yt-dlp（已装 2026.07.04，用于解析 YouTube/B 站等视频链接；若换机器需自行安装并确保在 PATH）
+
 ## 部署（免费）
 1. 推到 GitHub（公开仓库）→ 在 Vercel 导入该仓库。
 2. 无需配置任何环境变量：网站是 BYOK，所有 key 由用户在前端填写。
