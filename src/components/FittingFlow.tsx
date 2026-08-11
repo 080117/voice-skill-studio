@@ -6,7 +6,7 @@ import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, type AudioAnalysis } from "@/lib/audio/denoise-client";
 import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
-import { formatSeg, mergeSegments, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
+import { formatSeg, mergeSegments, mergeSegmentsMulti, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
 import { getRefAudio, newVoiceId, putRefAudio } from "@/lib/client-store";
 import { buildSkillPack, downloadBlob } from "@/lib/skillpack";
 import { Recorder } from "./Recorder";
@@ -15,6 +15,16 @@ import { Uploader } from "./Uploader";
 // 加长范读：覆盖常见声母/韵母、四声与轻重读，含叙述/感叹/疑问等语气，约 1 分钟
 const PASSAGE =
   "清晨的阳光洒在窗前，微风轻轻吹过。我坐在书桌旁，翻开一本厚厚的日记，回忆起过去的点点滴滴。那年春天，我们一起去爬山，路边的花开得特别灿烂，漫山遍野都是彩色的。你说，生活就像一条河，有时平静，有时汹涌，但总要向前流淌。后来我们各奔东西，各自忙碌，偶尔在深夜里想起那些温暖的日子。今天窗外又下起了小雨，滴滴答答，像极了我此刻的心情。生活总有起伏，但只要心里有光，就一定能走过每一个路口。明天，又是一个新的开始，我们一起去散散步，好吗？";
+
+interface VideoSource {
+  url: string;
+  ok: boolean;
+  error?: string;
+  source?: string;
+  blob?: Blob;
+  durationSec?: number;
+  segments: Slice[];
+}
 
 type Phase = "idle" | "denoising" | "denoised" | "creating" | "created";
 
@@ -34,35 +44,48 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [previewEmotion, setPreviewEmotion] = useState<Emotion | "auto">("auto");
   const [previewBusy, setPreviewBusy] = useState(false);
 
-  const [videoUrl, setVideoUrl] = useState("");
+  const [videoUrls, setVideoUrls] = useState("");
   const [videoBusy, setVideoBusy] = useState(false);
   const [videoError, setVideoError] = useState("");
-  const [videoSegments, setVideoSegments] = useState<Slice[]>([]);
-  const [videoDuration, setVideoDuration] = useState<number | null>(null);
-  const [videoAudioBlob, setVideoAudioBlob] = useState<Blob | null>(null);
+  const [videoSources, setVideoSources] = useState<VideoSource[]>([]);
   const [selectedSegs, setSelectedSegs] = useState<number[]>([]);
 
   const parseVideo = async () => {
-    const url = videoUrl.trim();
-    if (!url) return;
+    const urls = videoUrls
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (urls.length === 0) return;
     setVideoBusy(true);
     setVideoError("");
-    setVideoSegments([]);
+    setVideoSources([]);
     setSelectedSegs([]);
-    setVideoAudioBlob(null);
     try {
       const res = await fetch("/api/video-audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ urls }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `解析失败 HTTP ${res.status}`);
-      const blob = base64ToBlob(json.audioBase64, json.mime || "audio/wav");
-      setVideoAudioBlob(blob);
-      setVideoSegments(json.segments || []);
-      setVideoDuration(json.durationSec ?? null);
-      setSelectedSegs(pickDominantSlices(json.segments || [], 3));
+      const results: any[] = json.results || [];
+      const sources: VideoSource[] = results.map((r) => ({
+        url: r.url,
+        ok: !!r.ok,
+        error: r.error,
+        source: r.source,
+        blob: r.ok ? base64ToBlob(r.audioBase64, r.mime || "audio/wav") : undefined,
+        durationSec: r.durationSec,
+        segments: r.ok ? r.segments || [] : [],
+      }));
+      setVideoSources(sources);
+      const idx: number[] = [];
+      let base = 0;
+      for (const s of sources) {
+        for (const si of pickDominantSlices(s.segments, 3)) idx.push(base + si);
+        base += s.segments.length;
+      }
+      setSelectedSegs(idx);
     } catch (e) {
       setVideoError((e as Error).message);
     } finally {
@@ -74,14 +97,15 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     setSelectedSegs((prev) => (checked ? [...prev, i] : prev.filter((x) => x !== i)));
   };
 
-  const previewVideoSeg = (seg: Slice) => {
-    if (!videoAudioBlob) return;
-    const url = URL.createObjectURL(videoAudioBlob);
+  const previewVideoSeg = (entry: { src: number; seg: Slice }) => {
+    const blob = videoSources[entry.src]?.blob;
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
     const a = new Audio(url);
-    a.currentTime = seg.start;
+    a.currentTime = entry.seg.start;
     a.play().catch(() => {});
     const stop = () => {
-      if (a.currentTime >= seg.end) {
+      if (a.currentTime >= entry.seg.end) {
         a.pause();
         a.currentTime = 0;
         a.removeEventListener("timeupdate", stop);
@@ -91,14 +115,26 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   };
 
   const useSelectedSegs = async () => {
-    if (!videoAudioBlob || selectedSegs.length === 0) return;
+    if (selectedSegs.length === 0) return;
     setVideoBusy(true);
     setVideoError("");
     try {
-      const slices = selectedSegs
-        .map((i) => videoSegments[i])
-        .filter((x): x is Slice => Boolean(x));
-      const merged = await mergeSegments(videoAudioBlob, slices);
+      const groups = new Map<number, Slice[]>();
+      for (const i of selectedSegs) {
+        const entry = allSegs[i];
+        if (!entry) continue;
+        const list = groups.get(entry.src) ?? [];
+        list.push(entry.seg);
+        groups.set(entry.src, list);
+      }
+      const sources = [...groups.entries()]
+        .map(([srcIdx, segs]) => ({ blob: videoSources[srcIdx]?.blob, segments: segs }))
+        .filter((x): x is { blob: Blob; segments: Slice[] } => Boolean(x.blob));
+      if (sources.length === 0) throw new Error("没有可用的片段");
+      const merged =
+        sources.length === 1
+          ? await mergeSegments(sources[0].blob, sources[0].segments)
+          : await mergeSegmentsMulti(sources);
       onAudio(merged); // 进入原有 去噪 → 建声纹 → Skill 包 流程
     } catch (e) {
       setVideoError((e as Error).message);
@@ -106,6 +142,24 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       setVideoBusy(false);
     }
   };
+
+  const allSegs = useMemo(() => {
+    const arr: { src: number; seg: Slice }[] = [];
+    videoSources.forEach((s, srcIdx) => {
+      for (const seg of s.segments) arr.push({ src: srcIdx, seg });
+    });
+    return arr;
+  }, [videoSources]);
+
+  const srcOffsets = useMemo(() => {
+    const offsets: number[] = [];
+    let o = 0;
+    for (const s of videoSources) {
+      offsets.push(o);
+      o += s.segments.length;
+    }
+    return offsets;
+  }, [videoSources]);
 
   const canProcess = useMemo(() => {
     if (keys.ttsProvider !== "mock" && !keys.ttsApiKey) return false;
@@ -275,56 +329,77 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
           <Uploader onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
           <div className="border-t border-neutral-800 pt-3">
             <p className="mb-2 text-xs text-neutral-400">
-              或粘贴视频链接（直链 mp4/webm；YouTube/B 站需本机装 yt-dlp），自动抽音频并识别语音片段：
+              或粘贴视频链接（直链 mp4/webm；YouTube/B 站需本机装 yt-dlp），每行一个、可一次粘贴多个，自动抽音频并识别语音片段：
             </p>
-            <div className="flex gap-2">
-              <input
+            <div className="flex flex-col gap-2">
+              <textarea
                 className={inputCls}
-                placeholder="https://…/video.mp4"
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
+                rows={3}
+                placeholder={"https://…/video.mp4\nhttps://www.bilibili.com/video/BV…\nhttps://www.youtube.com/watch?v=…"}
+                value={videoUrls}
+                onChange={(e) => setVideoUrls(e.target.value)}
               />
-              <button onClick={parseVideo} disabled={videoBusy} className={btn}>
-                {videoBusy ? "解析中…" : "解析视频"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={parseVideo} disabled={videoBusy} className={btn}>
+                  {videoBusy ? "解析中…" : "解析视频"}
+                </button>
+                {videoSources.length > 0 && (
+                  <span className="text-xs text-neutral-400">共 {allSegs.length} 段语音</span>
+                )}
+              </div>
             </div>
             {videoError && <p className="mt-2 text-xs text-red-400">{videoError}</p>}
-            {videoSegments.length > 0 && (
-              <div className="mt-3 flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-neutral-400">
-                    检测到 {videoSegments.length} 段语音（总时长 {videoDuration?.toFixed(1) ?? "-"}s）。勾选属于目标角色的片段（已按时长推荐疑似主角）：
-                  </p>
-                  <div className="flex gap-2">
-                    <button onClick={() => setSelectedSegs(videoSegments.map((_, i) => i))} className="text-xs text-blue-400 hover:underline">
-                      全选
-                    </button>
-                    <button onClick={() => setSelectedSegs([])} className="text-xs text-neutral-500 hover:underline">
-                      清空
-                    </button>
+            {videoSources.length > 0 && (
+              <div className="mt-3 flex flex-col gap-3">
+                {videoSources.map((s, srcIdx) => (
+                  <div key={srcIdx} className="rounded-md border border-neutral-800 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs text-neutral-400">
+                        {s.ok ? `来源 ${srcIdx + 1}：${s.url}` : `来源 ${srcIdx + 1}（失败）：${s.url}`}
+                      </span>
+                      {s.ok && <span className="shrink-0 text-xs text-neutral-500">{s.durationSec?.toFixed(1) ?? "-"}s</span>}
+                    </div>
+                    {!s.ok && s.error && <p className="mt-1 text-xs text-red-400">{s.error}</p>}
+                    {s.ok && (
+                      <div className="mt-1 flex flex-col gap-1">
+                        {s.segments.map((seg, i) => {
+                          const gi = srcOffsets[srcIdx] + i;
+                          return (
+                            <label key={i} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-neutral-800">
+                              <input type="checkbox" checked={selectedSegs.includes(gi)} onChange={(e) => toggleSeg(gi, e.target.checked)} />
+                              <span>片段 {i + 1}：{formatSeg(seg)}</span>
+                              <button
+                                type="button"
+                                className="ml-auto text-blue-400 hover:underline"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  previewVideoSeg({ src: srcIdx, seg });
+                                }}
+                              >
+                                试听
+                              </button>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                </div>
-                <div className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md border border-neutral-800 p-2">
-                  {videoSegments.map((seg, i) => (
-                    <label key={i} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-neutral-800">
-                      <input type="checkbox" checked={selectedSegs.includes(i)} onChange={(e) => toggleSeg(i, e.target.checked)} />
-                      <span>片段 {i + 1}：{formatSeg(seg)}</span>
-                      <button
-                        type="button"
-                        className="ml-auto text-blue-400 hover:underline"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          previewVideoSeg(seg);
-                        }}
-                      >
-                        试听
+                ))}
+                {allSegs.length > 0 && (
+                  <div className="flex items-center justify-between">
+                    <button onClick={useSelectedSegs} disabled={selectedSegs.length === 0 || videoBusy} className={btn}>
+                      用选中片段生成参考音频（{selectedSegs.length} 段）
+                    </button>
+                    <div className="flex gap-2">
+                      <button onClick={() => setSelectedSegs(allSegs.map((_, i) => i))} className="text-xs text-blue-400 hover:underline">
+                        全选
                       </button>
-                    </label>
-                  ))}
-                </div>
-                <button onClick={useSelectedSegs} disabled={selectedSegs.length === 0 || videoBusy} className={btn}>
-                  用选中片段生成参考音频（{selectedSegs.length} 段）
-                </button>
+                      <button onClick={() => setSelectedSegs([])} className="text-xs text-neutral-500 hover:underline">
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

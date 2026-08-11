@@ -144,9 +144,12 @@ export function hasYtDlp(): Promise<boolean> {
 }
 
 /** 用 yt-dlp 下载音频（YouTube/B 站等） */
-export async function downloadWithYtDlp(url: string, maxBytes = 200 * 1024 * 1024): Promise<Buffer> {
+export async function downloadWithYtDlp(url: string, maxBytes = 200 * 1024 * 1024, proxy?: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("yt-dlp", ["-f", "bestaudio/best", "-o", "-", "--no-playlist", "--no-warnings", url], { stdio: ["ignore", "pipe", "pipe"] });
+    const args = ["-f", "bestaudio/best", "-o", "-", "--no-playlist", "--no-warnings"];
+    if (proxy) args.push("--proxy", proxy);
+    args.push(url);
+    const child = spawn("yt-dlp", args, { stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
     let total = 0;

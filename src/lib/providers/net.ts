@@ -41,3 +41,7 @@ export function fetchWithProxy(
   if (!dispatcher) return fetch(input, init);
   return fetch(input, { ...init, dispatcher } as RequestInit);
 }
+
+export function getProxyUrl(): string | undefined {
+  return proxy;
+}
