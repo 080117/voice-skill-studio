@@ -32,8 +32,18 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
       {open && (
         <div className="grid gap-4 border-t border-neutral-800 px-4 py-4 md:grid-cols-2">
           <div className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">LLM（情感标注 / 机器人对话）</h3>
-            <input className={inputCls} placeholder="Base URL，如 https://api.deepseek.com/v1" value={keys.llmBaseUrl} onChange={(e) => set({ llmBaseUrl: e.target.value })} />
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">LLM（情感标注 / 机器人对话）</h3>
+              <button
+                type="button"
+                onClick={() => set({ llmBaseUrl: "https://opencode.ai/zen/go/v1", llmModel: "glm-5" })}
+                className="text-xs text-blue-400 hover:underline"
+                title="填入 OpenCode Go（GLM-5 / Kimi K2.5 走 OpenAI 兼容接口）；TTS 声音克隆仍需单独的服务商 key"
+              >
+                OpenCode Go 预设
+              </button>
+            </div>
+            <input className={inputCls} placeholder="Base URL，如 https://opencode.ai/zen/go/v1" value={keys.llmBaseUrl} onChange={(e) => set({ llmBaseUrl: e.target.value })} />
             <div className="relative">
               <input
                 className={inputCls}
