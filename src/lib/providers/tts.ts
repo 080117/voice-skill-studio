@@ -136,22 +136,30 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     emotionControl: ["reference_audio"],
     async createVoice({ config, audioBase64, mime }) {
       const form = new FormData();
-      form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
-      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/voices`, {
+      form.append("type", "tts");
+      form.append("title", `vss-${Date.now()}`);
+      form.append("train_mode", "fast");
+      form.append("visibility", "private");
+      form.append("voices", blobFromB64(audioBase64, mime), "reference.wav");
+      const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/model`, {
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
         body: form,
       });
       if (!res.ok) throw new Error(await readError(res, "Fish Audio 创建声纹"));
       const json = (await res.json()) as any;
-      const voiceId = json?.voice_id ?? json?.data?.voice_id ?? json?.id;
-      if (!voiceId) throw new Error("Fish Audio 创建声纹响应缺少 voice_id");
-      return { voiceId, model: config.model, emotionControl: ["reference_audio"] };
+      const voiceId = json?._id ?? json?.voice_id ?? json?.data?.voice_id ?? json?.id;
+      if (!voiceId) throw new Error("Fish Audio 创建声纹响应缺少 _id/voice_id");
+      return { voiceId, model: config.model || "s2.1-pro-free", emotionControl: ["reference_audio"] };
     },
     async synthesize({ config, voiceId, text }) {
       const res = await fetch(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+          model: config.model || "s2.1-pro-free",
+        },
         body: JSON.stringify({ text, reference_id: voiceId, format: "mp3", chunk_length: 200 }),
       });
       if (!res.ok) throw new Error(await readError(res, "Fish Audio 合成"));
