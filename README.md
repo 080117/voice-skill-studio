@@ -17,7 +17,7 @@ npm run build      # 生产构建
 
 ## 使用流程（对用户）
 1. 在「API Keys」面板填入你的 LLM key（DeepSeek/Kimi/GLM/Qwen 等 OpenAI-compatible）与 TTS/克隆 key（硅基流动 CosyVoice / Fish Audio / MiniMax / OpenAI TTS）。
-2. 选择模式：**朗读拟合**（读屏幕上的文本）或 **音频拟合**（上传素材）。
+2. 选择模式：**朗读拟合**（读屏幕上的文本）或 **音频/视频拟合**（上传音频，或粘贴视频链接自动抽取音频并按片段选择目标角色）。
 3. 自动去噪 → 创建声纹 → 试听。
 4. 下载 Skill 包（zip：SKILL.md + voice.json + 去噪参考音频 + 情感示例）。
 5. 打开「机器人演示」：与机器人聊天，机器人用你的声纹带情感说话。

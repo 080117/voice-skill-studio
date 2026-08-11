@@ -9,6 +9,7 @@
 ## M1 拟合 MVP
 - [x] 朗读模式：录音 → 去噪 → 创建声纹 → 试听
 - [x] 素材模式：上传音频 → 去噪 → 创建声纹 → 试听
+- [x] 素材模式（视频链接）：粘贴视频链接 → 自动抽音频 → 语音片段识别 → 勾选目标角色 → 合并 → 去噪 → 创建声纹 → 试听
 - [x] 可下载 Skill 包（zip 含 SKILL.md/voice.json/reference.wav/examples）
 - [x] BYOK：无 key 时给出清晰引导，不崩溃
 - [x] 无效 key / 限流 / 不支持的 provider → 友好错误

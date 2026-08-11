@@ -1,4 +1,4 @@
-// 播放 base64 音频
+// 鎾斁 base64 闊抽
 export function audioSrc(base64: string, mimeType: string): string {
   return `data:${mimeType || "audio/mpeg"};base64,${base64}`;
 }
@@ -20,4 +20,11 @@ export function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+export function base64ToBlob(b64: string, mimeType: string): Blob {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType || "audio/wav" });
 }

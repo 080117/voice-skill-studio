@@ -5,7 +5,8 @@ import type { ApiKeysState, Emotion, VoiceMode, VoiceProfile } from "@/lib/types
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, type AudioAnalysis } from "@/lib/audio/denoise-client";
-import { blobToBase64, playAudio } from "@/lib/play";
+import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
+import { formatSeg, mergeSegments, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
 import { getRefAudio, newVoiceId, putRefAudio } from "@/lib/client-store";
 import { buildSkillPack, downloadBlob } from "@/lib/skillpack";
 import { Recorder } from "./Recorder";
@@ -31,6 +32,79 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [previewText, setPreviewText] = useState("你好，很高兴认识你。用我的声音打个招呼吧。");
   const [previewEmotion, setPreviewEmotion] = useState<Emotion | "auto">("auto");
   const [previewBusy, setPreviewBusy] = useState(false);
+
+  const [videoUrl, setVideoUrl] = useState("");
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [videoError, setVideoError] = useState("");
+  const [videoSegments, setVideoSegments] = useState<Slice[]>([]);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [videoAudioBlob, setVideoAudioBlob] = useState<Blob | null>(null);
+  const [selectedSegs, setSelectedSegs] = useState<number[]>([]);
+
+  const parseVideo = async () => {
+    const url = videoUrl.trim();
+    if (!url) return;
+    setVideoBusy(true);
+    setVideoError("");
+    setVideoSegments([]);
+    setSelectedSegs([]);
+    setVideoAudioBlob(null);
+    try {
+      const res = await fetch("/api/video-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `解析失败 HTTP ${res.status}`);
+      const blob = base64ToBlob(json.audioBase64, json.mime || "audio/wav");
+      setVideoAudioBlob(blob);
+      setVideoSegments(json.segments || []);
+      setVideoDuration(json.durationSec ?? null);
+      setSelectedSegs(pickDominantSlices(json.segments || [], 3));
+    } catch (e) {
+      setVideoError((e as Error).message);
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
+  const toggleSeg = (i: number, checked: boolean) => {
+    setSelectedSegs((prev) => (checked ? [...prev, i] : prev.filter((x) => x !== i)));
+  };
+
+  const previewVideoSeg = (seg: Slice) => {
+    if (!videoAudioBlob) return;
+    const url = URL.createObjectURL(videoAudioBlob);
+    const a = new Audio(url);
+    a.currentTime = seg.start;
+    a.play().catch(() => {});
+    const stop = () => {
+      if (a.currentTime >= seg.end) {
+        a.pause();
+        a.currentTime = 0;
+        a.removeEventListener("timeupdate", stop);
+      }
+    };
+    a.addEventListener("timeupdate", stop);
+  };
+
+  const useSelectedSegs = async () => {
+    if (!videoAudioBlob || selectedSegs.length === 0) return;
+    setVideoBusy(true);
+    setVideoError("");
+    try {
+      const slices = selectedSegs
+        .map((i) => videoSegments[i])
+        .filter((x): x is Slice => Boolean(x));
+      const merged = await mergeSegments(videoAudioBlob, slices);
+      onAudio(merged); // 进入原有 去噪 → 建声纹 → Skill 包 流程
+    } catch (e) {
+      setVideoError((e as Error).message);
+    } finally {
+      setVideoBusy(false);
+    }
+  };
 
   const canProcess = useMemo(() => {
     if (keys.ttsProvider !== "mock" && !keys.ttsApiKey) return false;
@@ -193,8 +267,63 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
           <Recorder onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
         </div>
       ) : (
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
           <Uploader onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
+          <div className="border-t border-neutral-800 pt-3">
+            <p className="mb-2 text-xs text-neutral-400">
+              或粘贴视频链接（直链 mp4/webm；YouTube/B 站需本机装 yt-dlp），自动抽音频并识别语音片段：
+            </p>
+            <div className="flex gap-2">
+              <input
+                className={inputCls}
+                placeholder="https://…/video.mp4"
+                value={videoUrl}
+                onChange={(e) => setVideoUrl(e.target.value)}
+              />
+              <button onClick={parseVideo} disabled={videoBusy} className={btn}>
+                {videoBusy ? "解析中…" : "解析视频"}
+              </button>
+            </div>
+            {videoError && <p className="mt-2 text-xs text-red-400">{videoError}</p>}
+            {videoSegments.length > 0 && (
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-neutral-400">
+                    检测到 {videoSegments.length} 段语音（总时长 {videoDuration?.toFixed(1) ?? "-"}s）。勾选属于目标角色的片段（已按时长推荐疑似主角）：
+                  </p>
+                  <div className="flex gap-2">
+                    <button onClick={() => setSelectedSegs(videoSegments.map((_, i) => i))} className="text-xs text-blue-400 hover:underline">
+                      全选
+                    </button>
+                    <button onClick={() => setSelectedSegs([])} className="text-xs text-neutral-500 hover:underline">
+                      清空
+                    </button>
+                  </div>
+                </div>
+                <div className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md border border-neutral-800 p-2">
+                  {videoSegments.map((seg, i) => (
+                    <label key={i} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-neutral-800">
+                      <input type="checkbox" checked={selectedSegs.includes(i)} onChange={(e) => toggleSeg(i, e.target.checked)} />
+                      <span>片段 {i + 1}：{formatSeg(seg)}</span>
+                      <button
+                        type="button"
+                        className="ml-auto text-blue-400 hover:underline"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          previewVideoSeg(seg);
+                        }}
+                      >
+                        试听
+                      </button>
+                    </label>
+                  ))}
+                </div>
+                <button onClick={useSelectedSegs} disabled={selectedSegs.length === 0 || videoBusy} className={btn}>
+                  用选中片段生成参考音频（{selectedSegs.length} 段）
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
