@@ -81,6 +81,7 @@ export default function Home() {
           keys={keys}
           voices={voices}
           selectedVoice={selectedVoice}
+          ttsBuiltinFish={ttsBuiltinFish}
           onSelectVoice={setSelectedVoice}
         />
       )}
