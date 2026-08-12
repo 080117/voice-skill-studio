@@ -42,10 +42,13 @@ npm run build      # 生产构建
 - ffmpeg（本机已装，用于去噪/视频抽音频/分段）
 - yt-dlp（已装 2026.07.04，用于解析 YouTube/B 站等视频链接；若换机器需自行安装并确保在 PATH）
 
-## 部署（免费）
-1. 推到 GitHub（公开仓库）→ 在 Vercel 导入该仓库。
-2. 可选：要给访客内置免费 Fish 音色，在 Vercel 的环境变量里配置 `FISH_AUDIO_KEY`（填你的 Fish Audio API key；仅服务端使用，不会下发前端）。不配置则维持纯 BYOK：所有 key 由用户在前端填写。
-3. 注意：Vercel Hobby 版函数最长 10 秒，长文本 TTS 可能超时；v1 已尽量用浏览器端处理 + 分块规避。若不够用，可升级 Pro 或把后端换到 Cloudflare Workers 等免费平台。
+## 部署（免费，Vercel）
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2F080117%2Fvoice-skill-studio)
+
+1. 点击上方按钮（或用 GitHub 账号登录 vercel.com → New Project → Import Git Repository → 选择 `080117/voice-skill-studio`）。
+2. 框架自动识别为 Next.js，无需改配置；点 Deploy 即得 `https://voice-skill-studio.vercel.app`。
+3. 可选：要给访客内置免费 Fish 音色 → Project → Settings → Environment Variables 加 `FISH_AUDIO_KEY`（仅服务端使用，不下发前端）。不配置则维持纯 BYOK：所有 key 由用户在前端填写。
+4. 说明：Vercel 免费版没有 ffmpeg/yt-dlp，**「视频链接拟合」在 Vercel 上不可用**（录音/上传音频/去噪/克隆/试听/聊天/Skill 包下载都正常，去噪走浏览器端降级）。若需要视频链接功能，请部署到自带 ffmpeg/yt-dlp 的服务器（如云主机）。
 
 ## 多 Agent 协作
 本项目由 Codex 主编排 + 子代理/辅助代理协作开发，规则见 `AGENTS.md`；预算与配置还原见 `docs/BUDGET.md` 与 `docs/REVERT.md`。
