@@ -28,9 +28,10 @@ interface VideoSource {
 
 type Phase = "idle" | "denoising" | "denoised" | "creating" | "created";
 
-export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVoiceCreated: (v: VoiceProfile) => void }) {
+export function FittingFlow({ keys, onVoiceCreated, ttsBuiltinFish = false }: { keys: ApiKeysState; onVoiceCreated: (v: VoiceProfile) => void; ttsBuiltinFish?: boolean }) {
   const supportsClone = TTS_PROVIDER_META[keys.ttsProvider].supportsClone;
   const maxRefSec = keys.ttsProvider === "siliconflow" ? 29 : 60;
+  const fishBuiltinOk = keys.ttsProvider === "fishaudio" && !!ttsBuiltinFish;
   const [mode, setMode] = useState<VoiceMode>("reading");
   const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
   const [denoisedBlob, setDenoisedBlob] = useState<Blob | null>(null);
@@ -165,10 +166,10 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   }, [videoSources]);
 
   const canProcess = useMemo(() => {
-    if (keys.ttsProvider !== "mock" && !keys.ttsApiKey) return false;
+    if (keys.ttsProvider !== "mock" && !fishBuiltinOk && !keys.ttsApiKey) return false;
     if (!supportsClone) return !!existingVoiceId.trim();
     return !!sourceBlob;
-  }, [keys.ttsProvider, keys.ttsApiKey, supportsClone, existingVoiceId, sourceBlob]);
+  }, [keys.ttsProvider, fishBuiltinOk, keys.ttsApiKey, supportsClone, existingVoiceId, sourceBlob]);
 
   const onAudio = async (blob: Blob) => {
     setSourceBlob(blob);
@@ -340,11 +341,11 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
             请完整朗读一遍（约 1 分钟）：音频越长、覆盖音素越全，拟合效果越好（≥30s 最佳）。
           </p>
           <p className="text-sm leading-relaxed text-neutral-200">{PASSAGE}</p>
-          <Recorder onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
+          <Recorder onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !fishBuiltinOk && !keys.ttsApiKey} />
         </div>
       ) : (
         <div className="flex flex-col gap-3 rounded-xl border border-neutral-800 bg-neutral-900/50 p-4">
-          <Uploader onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !keys.ttsApiKey} />
+          <Uploader onAudio={onAudio} disabled={keys.ttsProvider !== "mock" && !fishBuiltinOk && !keys.ttsApiKey} />
           <div className="border-t border-neutral-800 pt-3">
             <p className="mb-2 text-xs text-neutral-400">
               或粘贴视频链接（直链 mp4/webm；YouTube/B 站需本机装 yt-dlp），每行一个、可一次粘贴多个，自动抽音频并识别语音片段：
@@ -424,8 +425,11 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         </div>
       )}
 
-      {!keys.ttsApiKey && keys.ttsProvider !== "mock" && (
+      {!keys.ttsApiKey && keys.ttsProvider !== "mock" && !fishBuiltinOk && (
         <p className="text-xs text-amber-400">请先在「模型 API」面板填写 TTS API Key（演示模式除外）。</p>
+      )}
+      {!keys.ttsApiKey && fishBuiltinOk && (
+        <p className="text-xs text-emerald-500">使用网站内置免费 Fish key（s2.1-pro-free），可留空；填自己的 key 会优先。</p>
       )}
 
       {sourceNotice && <p className="text-xs text-amber-400">{sourceNotice}</p>}

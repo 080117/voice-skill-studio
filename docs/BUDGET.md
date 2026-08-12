@@ -19,6 +19,7 @@
 | Cursor | 免费版即可（仅编辑器） |
 | ChatGPT 套餐 | 不用升级（Codex 走 DeepSeek 自定义 provider） |
 | OpenCode Go（已订阅） | 文本 LLM（情感标注/机器人对话），已加网站预设，无需额外充值 |
+| Fish Audio 免费模型 s2.1-pro-free | TTS/声纹克隆 $0（公平使用限流：共享 key 会被 TPM/额度限制，个人/小范围够用） |
 | 国外模型（Gemini/Grok/OpenAI） | 默认不买；确需时先问用户 |
 
 ## 环境变量（余额查询用，勿提交）

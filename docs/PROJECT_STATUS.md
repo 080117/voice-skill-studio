@@ -63,6 +63,7 @@
 ## 8. 当前工作区状态（重要）
 - 代码已全部提交到 `main`（最新 `fee6abd`），工作区干净（除临时调试文件已删除）。
 - **SiliconFlow 创建声纹 404 已修复（fee6abd）**：旧接口 `/v1/audio/voices` 已下线，改用 `POST /v1/uploads/audio/voice`（multipart：file/model/customName/text），响应 `uri` 即声纹 ID；默认模型修正为 `FunAudioLLM/CosyVoice2-0.5B`；情感指令走 `<|endofprompt|>` 后缀；已加 3 个回归单测。
+- **内置免费 Fish key（FISH_AUDIO_KEY 环境变量）**：服务端兜底，用户留空 key 直接用内置的免费 Fish 音色/克隆，填自己的 key 优先；key 不进仓库、不下发前端（/api/tts/meta 只返回布尔）。
 - **参考音频超长导致 524 超时（9a911a6）**：合并视频片段/上传音频时按服务商自动截断（Fish Audio ≤60s、硅基 ≤29s）并提示，避免 Fish Audio 云端 100s 超时；API key 自动 trim，401 报错附检查提示。
 - **外部 API 走系统代理**：Fish Audio 等海外服务需代理才能访问（本机 127.0.0.1:7897）。`src/lib/providers/net.ts` 会在服务端自动读取 Windows 系统代理（或 `HTTPS_PROXY` 环境变量），并让 TTS/LLM 适配器经 `fetchWithProxy` 走代理；生产环境无代理时自动退化。
 - **本地 dev 服务器运行中**（http://localhost:3000，Hidden 后台启动）。注意：`next build` 与 `next dev` 不要同时运行，共用的 `.next` 会被覆盖，导致 dev 页面 CSS 404、失去 Tailwind 样式；本次按 停 dev → build → 删 .next → 重启 dev 处理，页面已恢复。
