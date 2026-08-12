@@ -78,6 +78,8 @@ export const LLM_PRESETS: LlmPreset[] = [
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
   { id: "siliconflow", label: "硅基流动 SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
   { id: "zhipu", label: "智谱 GLM（免费）", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.7-flash" },
+  { id: "kimi", label: "Moonshot Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2.6" },
+  { id: "qwen", label: "阿里云百炼 Qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
   { id: "custom", label: "自定义（高级）", baseUrl: "", model: "" },
 ];
 
