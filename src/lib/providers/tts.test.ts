@@ -93,6 +93,40 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
     const body = JSON.parse(init!.body as string) as Record<string, unknown>;
     expect(body.input).toBe("今天天气很好");
   });
+
+  it("createVoice 传 IndexTeam/IndexTTS-2：表单与返回 model 均为 IndexTTS-2", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ uri: "speech:vss-index:abc" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const created = await createVoice({
+      config: { provider: "siliconflow", apiKey: "sk-test", model: "IndexTeam/IndexTTS-2" },
+      audioBase64: Buffer.from("dummy").toString("base64"),
+      mime: "audio/wav",
+      mode: "reading",
+      text: "参考文本",
+    });
+    expect(created.model).toBe("IndexTeam/IndexTTS-2");
+    const [, init] = mockFetch.mock.calls[0];
+    const form = init!.body as FormData;
+    expect(form.get("model")).toBe("IndexTeam/IndexTTS-2");
+  });
+
+  it("synthesize 用 IndexTTS-2：模型透传且不注入 CosyVoice 情感指令", async () => {
+    mockFetch.mockResolvedValue(new Response(Buffer.from("fake-mp3"), { status: 200 }));
+    await synthesize({
+      config: { provider: "siliconflow", apiKey: "sk-test", model: "IndexTeam/IndexTTS-2" },
+      voiceId: "speech:vss-index:abc",
+      text: "今天天气很好",
+      emotion: "开心",
+    });
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init!.body as string) as Record<string, unknown>;
+    expect(body.model).toBe("IndexTeam/IndexTTS-2");
+    expect(body.input).toBe("今天天气很好");
+  });
 });
 
 describe("fishaudio 适配器（内置 key 兜底 FISH_AUDIO_KEY）", () => {

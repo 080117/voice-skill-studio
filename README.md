@@ -31,7 +31,7 @@ npm run build      # 生产构建
 
 ### TTS / 声音克隆
 - **Fish Audio（免费可用，推荐）**：官方 `s2.1-pro-free` 模型 **$0**（公平使用限流），免费档**包含声纹克隆**。自己注册一个 key 即可：打开 https://fish.audio → 注册/登录 → 控制台 → **API Keys** → 新建一个 key，粘贴到网站「API Keys」面板的 TTS 栏。站长也可在服务器配置 `FISH_AUDIO_KEY` 环境变量作内置兜底（用户留空 key 直接用、填自己的 key 优先）。
-- **硅基流动 SiliconFlow（CosyVoice）**：BYOK；上传音色克隆需账号实名认证。
+- **硅基流动 SiliconFlow（CosyVoice / IndexTTS-2）**：BYOK；上传音色克隆需账号实名认证。TTS 设置里可切换模型：`FunAudioLLM/CosyVoice2-0.5B`（默认，支持情感指令）或新一代 `IndexTeam/IndexTTS-2`（更自然拟真）。没账号可用国内手机号在 siliconflow.cn 注册，控制台「API 密钥」建 key——同一把 key 也能填到 LLM 栏（同一账号通用）。
 - **演示模式**：无需 key，生成测试音验证全流程（非真实声纹）。
 
 ## 里程碑

@@ -98,7 +98,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
 
   siliconflow: {
     id: "siliconflow",
-    label: "硅基流动（CosyVoice）",
+    label: "硅基流动（CosyVoice / IndexTTS-2）",
     supportsClone: true,
     emotionControl: ["instruct_text"],
     async createVoice({ config, audioBase64, mime, text }) {
@@ -119,12 +119,15 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       return { voiceId, model: config.model || "FunAudioLLM/CosyVoice2-0.5B", emotionControl: ["instruct_text"] };
     },
     async synthesize({ config, voiceId, text, emotion, speed = 1 }) {
-      const input = emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。<|endofprompt|>${text}` : text;
+      const model = config.model || "FunAudioLLM/CosyVoice2-0.5B";
+      // CosyVoice 用 <|endofprompt|> 情感指令；IndexTTS-2 不识别该标记，按文本自然表达即可
+      const isCosyVoice = model.includes("CosyVoice");
+      const input = isCosyVoice && emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。<|endofprompt|>${text}` : text;
       const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
-          model: config.model || "FunAudioLLM/CosyVoice2-0.5B",
+          model,
           input,
           voice: voiceId,
           response_format: "mp3",
@@ -250,4 +253,3 @@ export async function synthesize(input: SynthesizeInput): Promise<SynthesizedAud
 }
 
 export const TTS_PROVIDERS = providers;
-

@@ -3,9 +3,11 @@
 import { useState } from "react";
 import type { ApiKeysState, TtsProviderId } from "@/lib/types";
 import {
+  DEFAULT_TTS_MODELS,
   DEFAULT_TTS_BASE_URLS,
   EMPTY_KEYS,
   LLM_PRESETS,
+  TTS_MODEL_OPTIONS,
   TTS_PROVIDER_META,
   TTS_PROVIDER_OPTIONS,
   TTS_PROVIDER_LABELS,
@@ -32,7 +34,7 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
   const set = (patch: Partial<ApiKeysState>) => onChange({ ...keys, ...patch });
 
   const onProviderChange = (provider: TtsProviderId) => {
-    set({ ttsProvider: provider, ttsBaseUrl: DEFAULT_TTS_BASE_URLS[provider] });
+    set({ ttsProvider: provider, ttsBaseUrl: DEFAULT_TTS_BASE_URLS[provider], ttsModel: DEFAULT_TTS_MODELS[provider] });
   };
 
   const onLlmPresetChange = (id: string) => {
@@ -43,6 +45,9 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
 
   const llmPresetId = presetIdFor(keys);
   const isCustomLlm = llmPresetId === "custom";
+  const ttsModelOptions = TTS_MODEL_OPTIONS[keys.ttsProvider] ?? [];
+  // 兼容旧存档里 ttsModel 为空：展示时归一化到该服务商默认模型（适配器内同样有兜底）
+  const ttsModelValue = keys.ttsModel || DEFAULT_TTS_MODELS[keys.ttsProvider] || "";
 
   const inputCls =
     "w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 outline-none focus:border-blue-500";
@@ -106,6 +111,16 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
                 {showTtsKey ? "隐藏" : "显示"}
               </button>
             </div>
+            {ttsModelOptions.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-neutral-500">模型（声纹创建与合成共用）</label>
+                <select className={inputCls} value={ttsModelValue} onChange={(e) => set({ ttsModel: e.target.value })}>
+                  {ttsModelOptions.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <p className="text-xs text-neutral-500">
               {keys.ttsProvider === "mock"
                 ? "演示模式：不需要 key，生成测试音验证全流程。"
@@ -116,7 +131,9 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
                     : "该服务商不支持 API 上传克隆：请在控制台先完成声音复刻，再在拟合页输入已有 voice_id。"}
             </p>
             {keys.ttsProvider === "siliconflow" && (
-              <p className="text-xs text-neutral-500">小提示：SiliconFlow 的 key 也可以填到上方 LLM 里，同一把 key 两处通用。</p>
+              <p className="text-xs text-neutral-500">
+                小提示：没账号的话，去 siliconflow.cn 用国内手机号注册，控制台「API 密钥」里建 key；同一把 key 也能填到上方 LLM（同一账号通用）。
+              </p>
             )}
           </div>
 
