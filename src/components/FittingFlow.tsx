@@ -212,6 +212,18 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     return !!sourceBlob;
   }, [keys.ttsProvider, keys.ttsApiKey, supportsClone, existingVoiceId, sourceBlob]);
 
+  /** 参考素材质量体检：不合格直接提醒用户，避免「垃圾进、垃圾出」 */
+  const quality = useMemo(() => {
+    if (!analysis) return null;
+    const warnings: string[] = [];
+    if (analysis.durationSec < 10) warnings.push("参考偏短（<10s），建议 ≥15s");
+    if (analysis.p10 > 0.04) warnings.push("底噪/背景音偏大：BGM 会稀释音色、导致克隆不像，建议先「去噪」或换干净素材");
+    if (analysis.clippedRatio > 0.01) warnings.push("有爆音/削波，建议降低录音音量");
+    if (analysis.rms < 0.02) warnings.push("音量偏低，建议靠近麦克风或调大音量");
+    const level = warnings.length === 0 ? "good" : warnings.length >= 2 ? "bad" : "ok";
+    return { level, warnings };
+  }, [analysis]);
+
   const onAudio = async (blob: Blob) => {
     setSourceBlob(blob);
     setDenoisedBlob(null);
@@ -594,6 +606,10 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
               时长 {analysis.durationSec.toFixed(1)}s · RMS {analysis.rms.toFixed(3)}
               {analysis.durationSec < 5 ? "（偏短，建议 ≥10s）" : analysis.rms < 0.02 ? "（音量偏低）" : "（质量 OK）"}
             </span>
+          )}
+          {quality && quality.level === "good" && <span className="text-xs text-emerald-400">素材质量 OK，适合拟合</span>}
+          {quality && quality.level !== "good" && (
+            <p className="text-xs text-amber-400">⚠ 素材质量提醒：{quality.warnings.join("；")}</p>
           )}
           {(phase === "denoised" || phase === "creating") && (
             <span className="text-xs text-neutral-400">{usedFfmpeg ? "（服务端 ffmpeg 去噪）" : "（浏览器端去噪）"}</span>

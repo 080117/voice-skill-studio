@@ -9,7 +9,7 @@ export interface Slice {
 }
 
 /** 多段拟合最多上传的段数（超出则自动挑最有代表性的） */
-export const MAX_MULTI_SEGMENTS = 12;
+export const MAX_MULTI_SEGMENTS = 8;
 
 export interface SplitOptions {
   windowMs?: number;

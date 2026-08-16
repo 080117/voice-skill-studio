@@ -70,9 +70,15 @@ export interface AudioAnalysis {
   durationSec: number;
   rms: number;
   sampleRate: number;
+  /** |x| 低 10% 分位：底噪/背景音估计 */
+  p10: number;
+  /** 最大幅度 */
+  maxRms: number;
+  /** 削波比例（|x|>0.99 的采样占比） */
+  clippedRatio: number;
 }
 
-/** Decode & analyze audio: duration / RMS (loudness) */
+/** Decode & analyze audio: duration / RMS / 底噪 / 削波 */
 export async function analyzeBlob(blob: Blob): Promise<AudioAnalysis | null> {
   const ctx = new AudioContext({ sampleRate: 24000 });
   try {
@@ -81,11 +87,24 @@ export async function analyzeBlob(blob: Blob): Promise<AudioAnalysis | null> {
     const step = Math.max(1, Math.floor(ch.length / 200_000));
     let sum = 0;
     let count = 0;
+    let clipped = 0;
+    const abs: number[] = [];
     for (let i = 0; i < ch.length; i += step) {
       sum += ch[i] * ch[i];
       count++;
+      const v = Math.abs(ch[i]);
+      abs.push(v);
+      if (v > 0.99) clipped++;
     }
-    return { durationSec: decoded.duration, rms: count > 0 ? Math.sqrt(sum / count) : 0, sampleRate: decoded.sampleRate };
+    abs.sort((a, b) => a - b);
+    return {
+      durationSec: decoded.duration,
+      rms: count > 0 ? Math.sqrt(sum / count) : 0,
+      sampleRate: decoded.sampleRate,
+      p10: abs[Math.min(abs.length - 1, Math.floor(abs.length * 0.1))] ?? 0,
+      maxRms: abs[abs.length - 1] ?? 0,
+      clippedRatio: count > 0 ? clipped / count : 0,
+    };
   } catch {
     return null;
   } finally {
