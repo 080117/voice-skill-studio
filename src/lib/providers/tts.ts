@@ -130,6 +130,8 @@ const providers: Record<TtsProviderId, TtsProvider> = {
         });
         form.append("model", config.model || "FunAudioLLM/CosyVoice2-0.5B");
         form.append("customName", `vss-${Date.now()}`);
+        // CosyVoice 要求参考音频必须带 text（否则合成时 50507 500）。没有转录时补占位文本。
+        if (!parts.some((p) => p.text)) form.append("text", "参考音频");
         return form;
       };
       const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/uploads/audio/voice`, () => ({

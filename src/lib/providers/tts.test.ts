@@ -140,6 +140,24 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
     expect(String(form.get("customName"))).toMatch(/^vss-\d+$/);
   });
 
+  it("createVoice 无 text 时自动补占位 text（CosyVoice 声纹合成必需，否则 50507）", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ uri: "speech:vss:nt" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await createVoice({
+      config: { provider: "siliconflow", apiKey: "sk-test" },
+      audioBase64: Buffer.from("dummy").toString("base64"),
+      mime: "audio/wav",
+      mode: "clip",
+    });
+    const [, init] = mockFetch.mock.calls[0];
+    const form = init!.body as FormData;
+    expect(form.get("text")).toBe("参考音频");
+  });
+
   it("synthesize 用 IndexTTS-2：模型透传且不注入 CosyVoice 情感指令", async () => {
     mockFetch.mockResolvedValue(new Response(Buffer.from("fake-mp3"), { status: 200 }));
     await synthesize({
