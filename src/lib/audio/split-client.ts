@@ -8,6 +8,9 @@ export interface Slice {
   end: number;
 }
 
+/** 多段拟合最多上传的段数（超出则自动挑最有代表性的） */
+export const MAX_MULTI_SEGMENTS = 12;
+
 export interface SplitOptions {
   windowMs?: number;
   floorPct?: number;
@@ -15,6 +18,43 @@ export interface SplitOptions {
   minSpeech?: number;
   mergeGap?: number;
   maxSegments?: number;
+}
+
+/**
+ * 从片段里挑「最有代表性」的 n 段：按时间轴分桶抽样（保证覆盖全片前中后），
+ * 桶内优先选长度合适（5~20s）的段，避免只取开头或清一色短碎片。
+ */
+export function pickBestSegments(segs: Slice[], n: number): Slice[] {
+  if (segs.length <= n) return segs;
+  const total = segs[segs.length - 1]?.end ?? 1;
+  const score = (s: Slice): number => {
+    const len = s.end - s.start;
+    if (len >= 5 && len <= 20) return 3;
+    if (len >= 2) return 2;
+    if (len >= 1) return 1;
+    return 0.3;
+  };
+  const buckets: Slice[][] = Array.from({ length: n }, () => []);
+  for (const s of segs) {
+    const mid = (s.start + s.end) / 2;
+    const b = Math.max(0, Math.min(n - 1, Math.floor((mid / total) * n)));
+    buckets[b].push(s);
+  }
+  const picked: Slice[] = [];
+  for (const b of buckets) {
+    if (!b.length) continue;
+    b.sort((x, y) => score(y) - score(x));
+    picked.push(b[0]);
+  }
+  if (picked.length < n) {
+    const used = new Set(picked);
+    const rest = segs.filter((s) => !used.has(s)).sort((x, y) => score(y) - score(x));
+    for (const s of rest) {
+      if (picked.length >= n) break;
+      picked.push(s);
+    }
+  }
+  return picked.sort((a, b) => a.start - b.start);
 }
 
 async function decodeOnce(blob: Blob): Promise<AudioBuffer> {
@@ -129,7 +169,7 @@ export async function sliceAudioSegments(blob: Blob, slices: Slice[], maxSec: nu
 
 /** 长音频自动分段：VAD 找说话片段；找不到则均匀分块；每段 ≤ maxSec，最多 maxSegments 段 */
 export async function splitAudioBlob(blob: Blob, maxSec: number, opts: SplitOptions = {}): Promise<Blob[]> {
-  const { maxSegments = 10, ...vadOpts } = opts;
+  const { maxSegments = MAX_MULTI_SEGMENTS, ...vadOpts } = opts;
   const decoded = await decodeOnce(blob);
   const data = decoded.getChannelData(0);
   const sr = decoded.sampleRate;
@@ -142,7 +182,7 @@ export async function splitAudioBlob(blob: Blob, maxSec: number, opts: SplitOpti
   }
   // 每段 ≤ maxSec：优先在响度低谷处切，避免固定 30s 一刀切
   const capped = splitLongAtQuiet(segs, rms, windowMs / 1000, maxSec);
-  const chosen = capped.slice(0, maxSegments);
+  const chosen = pickBestSegments(capped, maxSegments);
   const out: Blob[] = [];
   for (const s of chosen) {
     if (s.end - s.start < 0.3) continue;

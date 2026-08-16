@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildEnergySegments, buildSpeechSegments, MAX_SEGMENT_SEC, parseSilenceDetectOutput, pickSegments } from "./video";
+import { MAX_MULTI_SEGMENTS, pickBestSegments } from "./split-client";
 import { pickDominantSlices } from "./merge-segments";
 
 /** 按分段生成 16-bit mono PCM：amp 决定该段响度 */
@@ -155,6 +156,26 @@ describe("video", () => {
     const energy = [{ start: 0, end: 15 }];
     const picked = pickSegments(silence, energy, false);
     expect(picked).toBe(silence);
+  });
+
+  it("pickBestSegments：片段少于上限时全保留", () => {
+    const segs = [
+      { start: 0, end: 10 },
+      { start: 12, end: 20 },
+    ];
+    expect(pickBestSegments(segs, 5)).toBe(segs);
+  });
+
+  it("pickBestSegments：超量时按时间桶抽样，覆盖全片而非只取开头", () => {
+    const segs = Array.from({ length: 53 }, (_, i) => {
+      const start = (i / 53) * 475;
+      return { start, end: start + 8 };
+    });
+    const picked = pickBestSegments(segs, MAX_MULTI_SEGMENTS);
+    expect(picked.length).toBe(MAX_MULTI_SEGMENTS);
+    expect(picked[0].start).toBeLessThan(20); // 覆盖开头
+    expect(picked[picked.length - 1].start).toBeGreaterThan(400); // 覆盖结尾
+    for (const s of picked) expect(segs).toContainEqual(s);
   });
 
   it("推荐主导片段按时长取前 N", () => {

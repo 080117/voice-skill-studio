@@ -5,7 +5,7 @@ import type { ApiKeysState, Emotion, VoiceMode, VoiceProfile } from "@/lib/types
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, truncateAudio, type AudioAnalysis } from "@/lib/audio/denoise-client";
-import { sliceAudioSegments, splitAudioBlob } from "@/lib/audio/split-client";
+import { MAX_MULTI_SEGMENTS, pickBestSegments, sliceAudioSegments, splitAudioBlob } from "@/lib/audio/split-client";
 import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
 import { formatSeg, mergeSegments, mergeSegmentsMulti, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
 import { getRefAudio, newVoiceId, putRefAudio } from "@/lib/client-store";
@@ -146,15 +146,21 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         : "";
       if (keys.ttsProvider === "siliconflow" && selectedSegs.length >= 2) {
         try {
+          // 全选/多选时：按时间轴自动挑最有代表性的若干段（覆盖全片），而不是只取前几段
+          const allSel: { src: number; seg: Slice }[] = [];
+          for (const [srcIdx, segs] of groups) for (const seg of segs) allSel.push({ src: srcIdx, seg });
+          const chosen = pickBestSegments(allSel.map((x) => x.seg), MAX_MULTI_SEGMENTS);
+          const chosenSet = new Set(chosen);
           const segBlobs: Blob[] = [];
-          for (const [srcIdx, segs] of groups) {
-            const b = videoSources[srcIdx]?.blob;
+          for (const item of allSel) {
+            if (!chosenSet.has(item.seg)) continue;
+            const b = videoSources[item.src]?.blob;
             if (!b) continue;
-            segBlobs.push(...(await sliceAudioSegments(b, segs, maxRefSec)));
+            segBlobs.push(...(await sliceAudioSegments(b, [item.seg], maxRefSec)));
           }
           if (segBlobs.length > 1) {
-            setRefSegments(segBlobs.slice(0, 10));
-            setSourceNotice(`已选 ${segBlobs.length} 段，将分段拟合为同一个声纹（SiliconFlow 多段参考，每段 ≤${maxRefSec}s）`);
+            setRefSegments(segBlobs);
+            setSourceNotice(`已选 ${allSel.length} 段，自动挑选 ${segBlobs.length} 段最有代表性的做分段拟合（覆盖全片，每段 ≤${maxRefSec}s）`);
           } else {
             setSourceNotice(cappedNotice);
           }
@@ -213,8 +219,8 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
             if (segs.length > 1) {
               const preview = await truncateAudio(blob, maxRefSec);
               setSourceBlob(preview);
-              setRefSegments(segs.slice(0, 10));
-              setSourceNotice(`超长素材已拆分为 ${Math.min(segs.length, 10)} 段（每段 ≤${maxRefSec}s），将分段拟合为同一个声纹`);
+              setRefSegments(segs);
+              setSourceNotice(`超长素材已拆分为 ${segs.length} 段，自动挑选最有代表性的分段拟合为同一个声纹（每段 ≤${maxRefSec}s）`);
               return;
             }
           } catch {
@@ -286,7 +292,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       // 分段拟合：SiliconFlow 一次上传多段参考，合并为同一个声纹
       if (refSegments && refSegments.length > 1) {
         const segs = await Promise.all(
-          refSegments.slice(0, 10).map(async (b) => ({ audioBase64: await blobToBase64(b), mime: b.type || "audio/wav" })),
+          refSegments.slice(0, MAX_MULTI_SEGMENTS).map(async (b) => ({ audioBase64: await blobToBase64(b), mime: b.type || "audio/wav" })),
         );
         const profile = await createVoice({
           segments: segs,
