@@ -2,8 +2,13 @@
 import type { Emotion, TtsConfig, TtsProviderId } from "../types";
 import { EMOTION_INSTRUCT } from "../emotion";
 import { emotionToneFreq, generateToneWav } from "../wav";
+import { randomUUID } from "node:crypto";
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { normalizeBaseUrl } from "./llm";
 import { fetchWithProxy } from "./net";
+import { runFfmpeg } from "../audio/video";
 
 export interface CreateVoiceInput {
   config: TtsConfig;
@@ -59,6 +64,103 @@ export function blobFromB64(b64: string, mime: string): Blob {
   return new Blob([ab], { type: mime || "audio/wav" });
 }
 
+// —— 阿里云百炼（DashScope）Qwen3-TTS 声音复刻辅助 ——
+
+/** 百炼声音复刻支持的 MIME（其余格式服务端先转 wav） */
+function dashMime(mime: string): string | undefined {
+  const m = (mime || "audio/wav").split(";")[0].trim().toLowerCase();
+  if (["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wav"].includes(m)) return "audio/wav";
+  if (["audio/mpeg", "audio/mp3", "audio/mpg"].includes(m)) return "audio/mpeg";
+  if (["audio/mp4", "audio/m4a", "audio/aac", "audio/x-m4a"].includes(m)) return "audio/mp4";
+  return undefined;
+}
+
+/** webm / 其它格式 → 24k mono wav（浏览器录音默认 webm，百炼只认 wav/mpeg/mp4） */
+async function toWavBuffer(buf: Buffer): Promise<Buffer> {
+  const tmpFile = join(tmpdir(), `vss-dash-${Date.now()}-${randomUUID().slice(0, 8)}.in`);
+  writeFileSync(tmpFile, buf);
+  try {
+    return await runFfmpeg(["-i", tmpFile, "-vn", "-ar", "24000", "-ac", "1", "-f", "wav", "pipe:1"], Buffer.alloc(0), 100 * 1024 * 1024, 120000);
+  } finally {
+    try { rmSync(tmpFile, { force: true }); } catch { /* ignore */ }
+  }
+}
+
+interface WavInfo {
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number;
+  data: Buffer;
+}
+
+/** 解析标准 PCM wav（RIFF/WAVE），失败返回 null */
+function parseWav(buf: Buffer): WavInfo | null {
+  if (buf.length < 44 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") return null;
+  let offset = 12;
+  let sampleRate = 0;
+  let channels = 0;
+  let bits = 0;
+  const chunks: Buffer[] = [];
+  while (offset + 8 <= buf.length) {
+    const id = buf.toString("ascii", offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    const body = buf.subarray(offset + 8, Math.min(offset + 8 + size, buf.length));
+    if (id === "fmt ") {
+      channels = body.readUInt16LE(2);
+      sampleRate = body.readUInt32LE(4);
+      bits = body.readUInt16LE(14);
+    } else if (id === "data") {
+      chunks.push(Buffer.from(body));
+    }
+    offset += 8 + size + (size % 2);
+  }
+  if (!sampleRate || !chunks.length) return null;
+  return { sampleRate, channels, bitsPerSample: bits, data: Buffer.concat(chunks) };
+}
+
+function buildWav(info: WavInfo): Buffer {
+  const { sampleRate, channels, bitsPerSample, data } = info;
+  const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+/** 多段拟合合并后的参考音频总时长上限（秒）：百炼 base64 数据 <10MB，24k 16bit mono 约 120s */
+const MAX_DASH_MERGE_SEC = 120;
+
+/**
+ * 把多段 wav 拼成一段（纯 JS 解析 PCM，无需 ffmpeg；格式不一致时回退用第一段）。
+ * 拼接结果超过 MAX_DASH_MERGE_SEC 时截断，避免 base64 超百炼 10MB 限制。
+ */
+function concatWavSegments(segs: { audioBase64: string; mime: string }[]): { base64: string; mime: string } {
+  const parsed = segs.map((s) => parseWav(b64ToBuffer(s.audioBase64)));
+  const first = parsed[0];
+  if (first && parsed.every((p) => p && p.sampleRate === first.sampleRate && p.channels === first.channels && p.bitsPerSample === first.bitsPerSample)) {
+    const bytesPerSec = (first.sampleRate * first.channels * first.bitsPerSample) / 8;
+    const maxBytes = MAX_DASH_MERGE_SEC * bytesPerSec;
+    const data = Buffer.concat(parsed.map((p) => p!.data)).subarray(0, maxBytes);
+    return {
+      base64: bufToB64(buildWav({ sampleRate: first.sampleRate, channels: first.channels, bitsPerSample: first.bitsPerSample, data })),
+      mime: "audio/wav",
+    };
+  }
+  return { base64: segs[0].audioBase64, mime: segs[0].mime || "audio/wav" };
+}
+
 const RETRY_BASE_MS = 300;
 
 /**
@@ -78,6 +180,10 @@ async function readError(res: Response, tag: string): Promise<string> {
   const t = await res.text().catch(() => "");
   let hint = "";
   if (res.status === 401) hint = "（API Key 无效或已过期，请检查是否有多余空格/换行、是否以 sk- 开头）";
+  else if (res.status === 403 && tag.includes("百炼"))
+    hint = "（模型未开通或无权限：请到百炼控制台完成实名认证，并在「模型广场」确认已开通 Qwen3-TTS 后重试）";
+  else if (res.status === 402 && tag.includes("百炼"))
+    hint = "（余额不足：请到百炼控制台「费用与充值」充值或领取免费额度后重试）";
   else if (res.status === 403 && (t.includes("Model disabled") || t.includes("30003")))
     hint = "（模型未开通：请到硅基流动控制台完成实名认证，并在「模型广场」搜索该模型点击开通后重试）";
   else if (res.status === 402 && (t.includes("30001") || t.includes("insufficient")))
@@ -111,6 +217,67 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     synthesize(input) {
       const buf = generateToneWav({ freq: emotionToneFreq(input.emotion || "平静") });
       return Promise.resolve({ audioBase64: bufToB64(buf), mimeType: "audio/wav" });
+    },
+  },
+
+  dashscope: {
+    id: "dashscope",
+    label: "阿里云百炼（Qwen3-TTS 声音复刻）",
+    supportsClone: true,
+    emotionControl: ["none"],
+    async createVoice({ config, audioBase64, mime, segments }) {
+      const key = config.apiKey?.trim() || "";
+      if (!key) throw new Error("阿里云百炼 未配置 API key：请在「模型 API」面板填写百炼 key（sk-ws- 开头）");
+      const model = config.model || "qwen3-tts-vc-2026-01-22";
+      let dataUrl: string;
+      if (segments && segments.length) {
+        const merged = concatWavSegments(segments);
+        dataUrl = `data:${merged.mime};base64,${merged.base64}`;
+      } else if (audioBase64) {
+        const m = dashMime(mime || "audio/wav");
+        dataUrl = m ? `data:${m};base64,${audioBase64}` : `data:audio/wav;base64,${bufToB64(await toWavBuffer(b64ToBuffer(audioBase64)))}`;
+      } else {
+        throw new Error("缺少参考音频");
+      }
+      const base = normalizeBaseUrl(config.baseUrl || "https://dashscope.aliyuncs.com/api/v1");
+      const res = await postWithRetry(`${base}/services/audio/tts/customization`, () => ({
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: "qwen-voice-enrollment",
+          input: {
+            action: "create",
+            target_model: model,
+            preferred_name: `vss${Date.now()}`,
+            audio: { data: dataUrl },
+          },
+        }),
+      }));
+      if (!res.ok) throw new Error(await readError(res, "百炼 创建声纹"));
+      const json = (await res.json()) as any;
+      const voiceId = json?.output?.voice ?? json?.output?.voice_id;
+      if (!voiceId) throw new Error(`百炼 创建声纹响应缺少 voice: ${JSON.stringify(json).slice(0, 200)}`);
+      return { voiceId, model, emotionControl: ["none"] };
+    },
+    async synthesize({ config, voiceId, text }) {
+      const key = config.apiKey?.trim() || "";
+      if (!key) throw new Error("阿里云百炼 未配置 API key：请在「模型 API」面板填写百炼 key（sk-ws- 开头）");
+      const model = config.model || "qwen3-tts-vc-2026-01-22";
+      const base = normalizeBaseUrl(config.baseUrl || "https://dashscope.aliyuncs.com/api/v1");
+      const res = await postWithRetry(`${base}/services/aigc/multimodal-generation/generation`, () => ({
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model, input: { text, voice: voiceId } }),
+      }));
+      if (!res.ok) throw new Error(await readError(res, "百炼 合成"));
+      const json = (await res.json()) as any;
+      const url = json?.output?.audio?.url;
+      if (!url) throw new Error(`百炼 合成响应缺少音频 URL: ${JSON.stringify(json).slice(0, 200)}`);
+      const audioRes = await fetchWithProxy(url, { signal: AbortSignal.timeout(60000) } as RequestInit);
+      if (!audioRes.ok) throw new Error(`百炼 音频下载失败 HTTP ${audioRes.status}`);
+      const bytes = Buffer.from(await audioRes.arrayBuffer());
+      const mimeType = (audioRes.headers.get("content-type") || "audio/wav").split(";")[0] || "audio/wav";
+      return { audioBase64: bufToB64(bytes), mimeType };
     },
   },
 

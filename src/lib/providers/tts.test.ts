@@ -6,6 +6,26 @@ vi.mock("./net", () => ({ fetchWithProxy: vi.fn() }));
 
 const mockFetch = vi.mocked(fetchWithProxy);
 
+/** 构造最小 PCM wav（mono 16bit），用于验证百炼多段拼接 */
+function makeWavSec(sec: number, sampleRate = 24000): Buffer {
+  const dataLen = sampleRate * 2 * sec;
+  const buf = Buffer.alloc(44 + dataLen);
+  buf.write("RIFF", 0);
+  buf.writeUInt32LE(36 + dataLen, 4);
+  buf.write("WAVE", 8);
+  buf.write("fmt ", 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); // mono
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * 2, 28); // byteRate
+  buf.writeUInt16LE(2, 32); // blockAlign
+  buf.writeUInt16LE(16, 34);
+  buf.write("data", 36);
+  buf.writeUInt32LE(dataLen, 40);
+  return buf;
+}
+
 describe("tts registry", () => {
   it("mock provider 可创建声纹并合成（无需 key）", async () => {
     const created = await createVoice({
@@ -22,6 +42,7 @@ describe("tts registry", () => {
   });
 
   it("siliconflow / fishaudio 支持克隆；minimax / openai 不支持", () => {
+    expect(getTtsProvider("dashscope").supportsClone).toBe(true);
     expect(getTtsProvider("siliconflow").supportsClone).toBe(true);
     expect(getTtsProvider("fishaudio").supportsClone).toBe(true);
     expect(getTtsProvider("minimax").supportsClone).toBe(false);
@@ -198,6 +219,127 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
       }),
     ).rejects.toThrow("SiliconFlow 合成 请求失败 HTTP 402");
     expect(mockFetch.mock.calls.length).toBe(1);
+  });
+});
+
+describe("dashscope 适配器（阿里云百炼 Qwen3-TTS 声音复刻）", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it("createVoice 走 /services/audio/tts/customization，base64 直传，返回 output.voice", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          output: { voice: "qwen-tts-vc-vsstest-voice-123", target_model: "qwen3-tts-vc-2026-01-22" },
+          usage: { count: 1 },
+          request_id: "r1",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const created = await createVoice({
+      config: { provider: "dashscope", apiKey: "sk-ws-test" },
+      audioBase64: Buffer.from("dummy-audio").toString("base64"),
+      mime: "audio/wav",
+      mode: "reading",
+    });
+    expect(created.voiceId).toBe("qwen-tts-vc-vsstest-voice-123");
+    expect(created.model).toBe("qwen3-tts-vc-2026-01-22");
+    expect(created.emotionControl).toEqual(["none"]);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(String(url)).toContain("/services/audio/tts/customization");
+    const body = JSON.parse(init!.body as string) as Record<string, any>;
+    expect(body.model).toBe("qwen-voice-enrollment");
+    expect(body.input.action).toBe("create");
+    expect(body.input.target_model).toBe("qwen3-tts-vc-2026-01-22");
+    expect(body.input.preferred_name).toMatch(/^vss\d+$/);
+    expect(String(body.input.audio.data)).toContain("data:audio/wav;base64,");
+    expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer sk-ws-test");
+  });
+
+  it("synthesize 走 multimodal-generation，再下载 OSS 音频 URL 返回 base64", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output: { audio: { url: "https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/xxx.wav?Expires=1" }, finish_reason: "stop" },
+            usage: { characters: 5 },
+            request_id: "r2",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(Buffer.from("fake-wav-bytes"), { status: 200, headers: { "Content-Type": "audio/x-wav" } }));
+    const out = await synthesize({
+      config: { provider: "dashscope", apiKey: "sk-ws-test" },
+      voiceId: "qwen-tts-vc-voice-123",
+      text: "你好，测试一下。",
+      emotion: "平静",
+    });
+    expect(out.mimeType).toBe("audio/x-wav");
+    expect(out.audioBase64).toBe(Buffer.from("fake-wav-bytes").toString("base64"));
+    const [url1, init1] = mockFetch.mock.calls[0];
+    expect(String(url1)).toContain("/services/aigc/multimodal-generation/generation");
+    const body = JSON.parse(init1!.body as string) as Record<string, any>;
+    expect(body.model).toBe("qwen3-tts-vc-2026-01-22");
+    expect(body.input.voice).toBe("qwen-tts-vc-voice-123");
+    expect(body.input.text).toBe("你好，测试一下。");
+    expect(String(mockFetch.mock.calls[1][0])).toContain("dashscope-result-bj.oss-cn-beijing");
+    expect(mockFetch.mock.calls.length).toBe(2);
+  });
+
+  it("无 key：抛明确错误（无内置兜底）", async () => {
+    await expect(
+      createVoice({
+        config: { provider: "dashscope", apiKey: "" },
+        audioBase64: Buffer.from("dummy").toString("base64"),
+        mime: "audio/wav",
+        mode: "clip",
+      }),
+    ).rejects.toThrow("阿里云百炼 未配置 API key");
+  });
+
+  it("createVoice 传多段 segments：服务端拼接为一段 base64（上限内）", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({ output: { voice: "qwen-tts-vc-multi-1" }, usage: { count: 1 }, request_id: "r3" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const wav1 = makeWavSec(1);
+    const wav2 = makeWavSec(1);
+    await createVoice({
+      config: { provider: "dashscope", apiKey: "sk-ws-test" },
+      mime: "audio/wav",
+      mode: "clip",
+      segments: [
+        { audioBase64: wav1.toString("base64"), mime: "audio/wav" },
+        { audioBase64: wav2.toString("base64"), mime: "audio/wav" },
+      ],
+    });
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init!.body as string) as Record<string, any>;
+    const dataUrl: string = body.input.audio.data;
+    expect(dataUrl.startsWith("data:audio/wav;base64,")).toBe(true);
+    const merged = Buffer.from(dataUrl.split(",")[1], "base64");
+    // 两段 1s 24k mono 16bit 拼接：44 字节头 + 2 * (24000*2) 字节 PCM
+    expect(merged.length).toBe(44 + 2 * 24000 * 2);
+  });
+
+  it("synthesize 遇 429 自动重试，最终成功", async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "Throttling", message: "限流" }), { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ output: { audio: { url: "https://x.example/1.wav" } } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(Buffer.from("ok"), { status: 200 }));
+    const out = await synthesize({ config: { provider: "dashscope", apiKey: "sk-ws-test" }, voiceId: "v1", text: "你好" });
+    expect(out.mimeType).toBe("audio/wav");
+    expect(mockFetch.mock.calls.length).toBe(3);
   });
 });
 

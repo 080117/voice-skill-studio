@@ -147,7 +147,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       const cappedNotice = merged.capped
         ? `选中片段合计过长，参考音频已截取为 ${merged.totalSec.toFixed(0)}s（上限 ${maxRefSec}s）`
         : "";
-      if (keys.ttsProvider === "siliconflow" && selectedSegs.length >= 2) {
+      if ((keys.ttsProvider === "siliconflow" || keys.ttsProvider === "dashscope") && selectedSegs.length >= 2) {
         try {
           // 全选/多选时：按时间轴自动挑最有代表性的若干段（覆盖全片），而不是只取前几段
           const allSel: { src: number; seg: Slice }[] = [];
@@ -235,8 +235,8 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     try {
       const dur = await analyzeBlob(blob);
       if (dur && dur.durationSec > maxRefSec) {
-        // 超长素材：硅基流动支持多段参考，拆段做「分段拟合」合并为同一个声纹
-        if (mode === "clip" && keys.ttsProvider === "siliconflow") {
+        // 超长素材：硅基流动 / 百炼 支持多段参考，拆段做「分段拟合」合并为同一个声纹
+        if (mode === "clip" && (keys.ttsProvider === "siliconflow" || keys.ttsProvider === "dashscope")) {
           try {
             const segs = await splitAudioBlob(blob, maxRefSec);
             if (segs.length > 1) {
@@ -276,7 +276,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       setAnalysis(await analyzeBlob(finalBlob).catch(() => null));
       setPhase("denoised");
       // 分段拟合：用去噪后的音频重新拆段，让克隆参考也是去噪后的
-      if (refSegments && refSegments.length > 1 && mode === "clip" && keys.ttsProvider === "siliconflow") {
+      if (refSegments && refSegments.length > 1 && mode === "clip" && (keys.ttsProvider === "siliconflow" || keys.ttsProvider === "dashscope")) {
         try {
           const segs = await splitAudioBlob(finalBlob, maxRefSec);
           if (segs.length > 1) setRefSegments(segs);
@@ -580,15 +580,17 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       {/* 处理按钮 */}
       {sourceBlob && (
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-neutral-400">
-            <input
-              type="checkbox"
-              checked={autoTranscribe}
-              onChange={(e) => setAutoTranscribe(e.target.checked)}
-              className="accent-emerald-500"
-            />
-            自动转写参考音频（免费，提升拟合质量）
-          </label>
+          {keys.ttsProvider === "siliconflow" && (
+            <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+              <input
+                type="checkbox"
+                checked={autoTranscribe}
+                onChange={(e) => setAutoTranscribe(e.target.checked)}
+                className="accent-emerald-500"
+              />
+              自动转写参考音频（免费，提升拟合质量）
+            </label>
+          )}
           <select
             className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200"
             value={denoiseStrength}
@@ -642,7 +644,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
           </div>
           {profile.provider === "mock" && (
             <p className="text-xs text-amber-400">
-              ⚠ 演示模式：试听听到的是测试音，不是你的声音；Skill 包里的 voice_id 不可用于真实机器人。请换真实 TTS key（硅基流动 / Fish Audio 等）后再拟合。
+              ⚠ 演示模式：试听听到的是测试音，不是你的声音；Skill 包里的 voice_id 不可用于真实机器人。请换真实 TTS key（阿里云百炼 / 硅基流动 / Fish Audio 等）后再拟合。
             </p>
           )}
 

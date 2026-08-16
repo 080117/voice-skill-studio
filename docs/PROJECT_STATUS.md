@@ -41,16 +41,23 @@
 - 主要组件：`ApiKeysForm`（模型 API 配置）、`FittingFlow`（拟合流程）、`ChatBot`、`VoiceLibrary`、`Recorder`、`Uploader`。
 - 文档：`docs/`（ROADMAP / ACCEPTANCE / BUDGET / REVERT / tasks/M0-M4 / backups 配置快照）。
 
-## 5. 模型 API 配置（刚简化完，commit fee6abd）
+## 5. 模型 API 配置
 - **LLM**：服务预设下拉——OpenCode Go（GLM-5，默认）、DeepSeek、硅基流动、智谱 GLM（免费）、自定义（高级）。选服务自动填 Base URL + 模型名，只填 Key。
-- **TTS/声音克隆**：只留 3 个——硅基流动（CosyVoice，默认）、Fish Audio、演示模式。MiniMax/OpenAI TTS 从界面移除（代码保留，后续可加回）。
-- 首次打开自动预选 OpenCode Go + 硅基流动，只需粘 2 个 Key。
+- **TTS/声音克隆**：只留 4 个——阿里云百炼（Qwen3-TTS 声音复刻，默认）、硅基流动（CosyVoice / IndexTTS-2）、Fish Audio、演示模式。MiniMax/OpenAI TTS 从界面移除（代码保留，后续可加回）。
+- 首次打开自动预选 OpenCode Go + 阿里云百炼，只需粘 2 个 Key。
 - 说明：OpenCode Go 订阅只有文本 LLM（GLM-5/Kimi K2.5），**没有** TTS/声音克隆能力；声音克隆需 SiliconFlow / Fish Audio 等专用服务商。
+
+### 阿里云百炼适配器（dashscope，新增）
+- 用百炼「通用 API Key」（`sk-ws-` 开头），默认模型 `qwen3-tts-vc-2026-01-22`（Qwen3-TTS 声音复刻）。
+- 建声纹：`POST /api/v1/services/audio/tts/customization`（model=`qwen-voice-enrollment`，音频 base64 直传，无需公网 URL）；合成：`POST /api/v1/services/aigc/multimodal-generation/generation`（返回 OSS 音频 URL，服务端下载后回传 base64）。
+- 分段拟合复用：多段 wav 服务端纯 JS 拼接为一段（上限 120s，避免超百炼 10MB base64 限制）；webm 等格式服务端 ffmpeg 转 wav。
+- 说明：百炼**没有 IndexTTS-2**；Qwen3-TTS-VC 是百炼官方声音复刻模型，相似度/稳定性好，且国内直连不走代理。
 
 ## 6. 验证状态
 - `npm run typecheck` ✅
-- `npm test`（18 个单测）✅：wav、emotion、tts provider、video、skillpack（含 SiliconFlow 新接口回归）
+- `npm test`（49 个单测）✅：wav、emotion、tts provider（含 SiliconFlow 新接口回归 + 百炼 dashscope 适配器）、video、skillpack
 - `npm run build` ✅
+- 已用真实百炼 key 端到端验证：`/api/voices` 建声纹 200 → `/api/tts` 合成 200（wav 6s）✅
 - Playwright E2E 全链路（录音→拟合→试听→对话→下载 zip）✅（自测通过，未入库）
 - CI：GitHub Actions 工作流已配置（build + lint + test + e2e）
 
@@ -62,6 +69,7 @@
 
 ## 8. 当前工作区状态（重要）
 - 代码已全部提交到 `main`（最新提交见 git log / GitHub），工作区干净（除临时调试文件已删除）。
+- **新增阿里云百炼 TTS 适配器（dashscope，默认）**：解决硅基流动 CosyVoice 长期 500 / IndexTTS-2 未开通的问题。百炼无 IndexTTS-2，改用官方 Qwen3-TTS 声音复刻（`qwen3-tts-vc-2026-01-22`），base64 直传建声纹、无需公网 URL；支持长素材分段拟合（服务端拼接 ≤120s）。已通过真实 key 端到端验证。
 - **SiliconFlow 创建声纹 404 已修复（fee6abd）**：旧接口 `/v1/audio/voices` 已下线，改用 `POST /v1/uploads/audio/voice`（multipart：file/model/customName/text），响应 `uri` 即声纹 ID；默认模型修正为 `FunAudioLLM/CosyVoice2-0.5B`；情感指令走 `<|endofprompt|>` 后缀；已加 3 个回归单测。
 - **纯 BYOK（已移除内置 Fish key）**：Fish Audio 不再内置免费 key——`FISH_AUDIO_KEY` 环境变量、`/api/tts/meta` 接口、前端「可留空」逻辑均已删除，所有 TTS 服务商都需用户在前端填自己的 key；Fish 免费档 `s2.1-pro-free` 仍 $0，自行注册即可。
 - **参考音频超长导致 524 超时（9a911a6）**：合并视频片段/上传音频时按服务商自动截断（Fish Audio ≤60s、硅基 ≤29s）并提示，避免 Fish Audio 云端 100s 超时；API key 自动 trim，401 报错附检查提示。
@@ -77,9 +85,9 @@
 
 ## 9. 下一步（按优先级）
 1. ~~重启本地 dev 服务器，确认 UI 恢复正常~~ ✅ 已完成：dev 运行中，首页 200，`/api/voices` 路由正常（空 body 返回 400 校验）。
-2. 用户本地实测：填 OpenCode Go key（LLM）+ SiliconFlow key（TTS/克隆）→ 试音质与情感；出 3 组 A/B 对照音频（ACCEPTANCE M2 待办）。
+2. 用户本地实测：在「模型 API」面板把 TTS 切到**阿里云百炼**并粘贴 `sk-ws-` key（LLM 也可填同一把 key 选「阿里云百炼 Qwen」）→ 试听音质与相似度；与之前硅基 CosyVoice 结果做 A/B 对照（ACCEPTANCE M2 待办）。
 3. 部署：安装并登录 `gh` CLI → 推送 GitHub 仓库 `voice-skill-studio` → Vercel 导入（注意 Hobby 10s 函数限制，已用流式/分块规避）。
-4. 可选：说话人分离模型做视频多角色自动区分（需用户同意）；阿里云百炼 CosyVoice 适配器（用户确认后加）。
+4. 可选：说话人分离模型做视频多角色自动区分（需用户同意）；如需 CosyVoice v3.5 free-style 情感指令（需公网音频 URL 建声纹），暂不做。
 5. 收尾：按 `docs/REVERT.md` 还原本机配置（.codex/config.toml、cc-switch、opencode 配置、环境变量），快照在 `docs/backups/`。
 6. workbuddy（Kimi K3）尚未配置，待用户提供 key/同意。
 

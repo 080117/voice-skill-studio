@@ -14,6 +14,8 @@ export const EMOTION_EXAMPLE_TEXTS: Record<Emotion, string> = {
 
 function providerNote(provider: TtsProviderId): string {
   switch (provider) {
+    case "dashscope":
+      return "使用阿里云百炼（DashScope）Qwen3-TTS-VC：填入该 voice_id 作为 `voice` 参数。需在百炼控制台配置 API key（sk-ws- 开头）。";
     case "siliconflow":
       return "使用硅基流动（SiliconFlow）CosyVoice：填入该 voice_id 作为 `voice` 参数；情感通过指令文本（见 examples）。需在服务商控制台配置 API key。";
     case "fishaudio":

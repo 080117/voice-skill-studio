@@ -13,10 +13,10 @@ const schema = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1).max(20),
   voice: z.object({
     providerVoiceId: z.string().min(1),
-    provider: z.enum(["siliconflow", "fishaudio", "minimax", "openai", "mock"]),
+    provider: z.enum(["dashscope", "siliconflow", "fishaudio", "minimax", "openai", "mock"]),
   }),
   tts: z.object({
-    provider: z.enum(["siliconflow", "fishaudio", "minimax", "openai", "mock"]),
+    provider: z.enum(["dashscope", "siliconflow", "fishaudio", "minimax", "openai", "mock"]),
     apiKey: z.string(),
     baseUrl: z.string().optional(),
     model: z.string().optional(),

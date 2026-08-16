@@ -12,10 +12,10 @@ const schema = z.object({
   text: z.string().min(1).max(2000),
   voice: z.object({
     providerVoiceId: z.string().min(1),
-    provider: z.enum(["siliconflow", "fishaudio", "minimax", "openai", "mock"]),
+    provider: z.enum(["dashscope", "siliconflow", "fishaudio", "minimax", "openai", "mock"]),
   }),
   tts: z.object({
-    provider: z.enum(["siliconflow", "fishaudio", "minimax", "openai", "mock"]),
+    provider: z.enum(["dashscope", "siliconflow", "fishaudio", "minimax", "openai", "mock"]),
     apiKey: z.string(),
     baseUrl: z.string().optional(),
     model: z.string().optional(),

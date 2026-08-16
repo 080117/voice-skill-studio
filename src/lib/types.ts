@@ -12,7 +12,7 @@ export type Emotion =
 
 export const EMOTIONS: Emotion[] = ["平静", "开心", "悲伤", "激动", "严肃", "温柔"];
 
-export type TtsProviderId = "siliconflow" | "fishaudio" | "minimax" | "openai" | "mock";
+export type TtsProviderId = "dashscope" | "siliconflow" | "fishaudio" | "minimax" | "openai" | "mock";
 
 /** 去噪强度 */
 export type DenoiseStrength = "light" | "standard" | "strong";
@@ -90,10 +90,13 @@ export const LLM_PRESETS: LlmPreset[] = [
 export const DEFAULT_LLM_PRESET: LlmPreset = LLM_PRESETS[0];
 
 /** TTS 下拉只展示这几个；minimax/openai 保留代码供后续扩展 */
-export const TTS_PROVIDER_OPTIONS: TtsProviderId[] = ["siliconflow", "fishaudio", "mock"];
+export const TTS_PROVIDER_OPTIONS: TtsProviderId[] = ["dashscope", "siliconflow", "fishaudio", "mock"];
 
 /** 各 TTS 服务商可选模型（前端展示用；适配器内也有兜底默认） */
 export const TTS_MODEL_OPTIONS: Record<TtsProviderId, { value: string; label: string }[]> = {
+  dashscope: [
+    { value: "qwen3-tts-vc-2026-01-22", label: "Qwen3-TTS-VC（声音复刻 · 高相似度）" },
+  ],
   siliconflow: [
     { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2-0.5B（默认，支持情感指令）" },
     { value: "IndexTeam/IndexTTS-2", label: "IndexTTS-2（新一代，更自然拟真）" },
@@ -106,6 +109,7 @@ export const TTS_MODEL_OPTIONS: Record<TtsProviderId, { value: string; label: st
 
 /** 切换 TTS 服务商时自动带上的默认模型 */
 export const DEFAULT_TTS_MODELS: Record<TtsProviderId, string> = {
+  dashscope: "qwen3-tts-vc-2026-01-22",
   siliconflow: "FunAudioLLM/CosyVoice2-0.5B",
   fishaudio: "s2.1-pro-free",
   minimax: "speech-02-hd",
@@ -118,13 +122,14 @@ export const EMPTY_KEYS: ApiKeysState = {
   llmBaseUrl: DEFAULT_LLM_PRESET.baseUrl,
   llmApiKey: "",
   llmModel: DEFAULT_LLM_PRESET.model,
-  ttsProvider: "siliconflow",
+  ttsProvider: "dashscope",
   ttsApiKey: "",
   ttsBaseUrl: "",
-  ttsModel: DEFAULT_TTS_MODELS.siliconflow,
+  ttsModel: DEFAULT_TTS_MODELS.dashscope,
 };
 
 export const DEFAULT_TTS_BASE_URLS: Record<TtsProviderId, string> = {
+  dashscope: "https://dashscope.aliyuncs.com/api/v1",
   siliconflow: "https://api.siliconflow.cn/v1",
   fishaudio: "https://api.fish.audio",
   minimax: "https://api.minimax.chat/v1",
@@ -133,6 +138,7 @@ export const DEFAULT_TTS_BASE_URLS: Record<TtsProviderId, string> = {
 };
 
 export const TTS_PROVIDER_LABELS: Record<TtsProviderId, string> = {
+  dashscope: "阿里云百炼（Qwen3-TTS 声音复刻）",
   siliconflow: "硅基流动 SiliconFlow（CosyVoice / IndexTTS-2）",
   fishaudio: "Fish Audio",
   minimax: "MiniMax",
@@ -142,6 +148,7 @@ export const TTS_PROVIDER_LABELS: Record<TtsProviderId, string> = {
 
 /** 客户端展示用 provider 元信息（与服务端适配器保持一致） */
 export const TTS_PROVIDER_META: Record<TtsProviderId, { label: string; supportsClone: boolean }> = {
+  dashscope: { label: "阿里云百炼（Qwen3-TTS 声音复刻）", supportsClone: true },
   siliconflow: { label: "硅基流动 SiliconFlow（CosyVoice / IndexTTS-2）", supportsClone: true },
   fishaudio: { label: "Fish Audio", supportsClone: true },
   minimax: { label: "MiniMax（需控制台先做声音复刻）", supportsClone: false },

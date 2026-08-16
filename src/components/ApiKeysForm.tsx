@@ -133,6 +133,11 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
                 小提示：首次使用需先在硅基流动控制台完成<b>实名认证</b>，并在「模型广场」把 CosyVoice / IndexTTS-2 点<b>开通</b>；报 30003「Model disabled」就是这个没弄好。同一把 key 也能填到上方 LLM（同一账号通用）。
               </p>
             )}
+            {keys.ttsProvider === "dashscope" && (
+              <p className="text-xs text-neutral-500">
+                小提示：填百炼「通用 API Key」（<b>sk-ws- 开头</b>）即可。声音复刻用 <b>Qwen3-TTS-VC</b>，直接上传音频建声纹、无需公网 URL；同一把 key 也能填到上方 LLM（选「阿里云百炼 Qwen」）。
+              </p>
+            )}
           </div>
 
           <div className="md:col-span-2 flex gap-2">

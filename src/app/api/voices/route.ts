@@ -23,7 +23,7 @@ const schema = z.object({
     .max(12)
     .optional(),
   tts: z.object({
-    provider: z.enum(["siliconflow", "fishaudio", "minimax", "openai", "mock"]),
+    provider: z.enum(["dashscope", "siliconflow", "fishaudio", "minimax", "openai", "mock"]),
     apiKey: z.string(),
     baseUrl: z.string().optional(),
     model: z.string().optional(),
