@@ -14,6 +14,9 @@ export const EMOTIONS: Emotion[] = ["平静", "开心", "悲伤", "激动", "严
 
 export type TtsProviderId = "siliconflow" | "fishaudio" | "minimax" | "openai" | "mock";
 
+/** 去噪强度 */
+export type DenoiseStrength = "light" | "standard" | "strong";
+
 export interface TtsConfig {
   provider: TtsProviderId;
   apiKey: string;

@@ -1,5 +1,6 @@
 // 客户端 API 封装（BYOK：key 随请求头传递，服务端不落盘）
 import type { ApiKeysState, LlmConfig, TtsConfig, VoiceProfile } from "./types";
+import type { DenoiseStrength } from "./types";
 
 export interface DenoiseResult {
   blob: Blob;
@@ -29,15 +30,21 @@ async function postJson(url: string, body: unknown, timeoutMs: number): Promise<
   }
 }
 
-export async function denoise(blob: Blob): Promise<DenoiseResult> {
+export async function denoise(blob: Blob, strength: DenoiseStrength = "standard"): Promise<DenoiseResult> {
   const form = new FormData();
   form.append("file", blob, "input-audio");
-  const res = await fetch("/api/denoise", { method: "POST", body: form });
-  if (!res.ok) throw new Error(`去噪失败 HTTP ${res.status}`);
-  return {
-    blob: await res.blob(),
-    usedFfmpeg: res.headers.get("X-Used-Ffmpeg") === "1",
-  };
+  form.append("strength", strength);
+  try {
+    const res = await fetch("/api/denoise", { method: "POST", body: form, signal: AbortSignal.timeout(90_000) });
+    if (!res.ok) throw new Error(`去噪失败 HTTP ${res.status}`);
+    return {
+      blob: await res.blob(),
+      usedFfmpeg: res.headers.get("X-Used-Ffmpeg") === "1",
+    };
+  } catch (e) {
+    if (e instanceof Error && e.name === "TimeoutError") throw new Error("去噪超时，请重试");
+    throw e;
+  }
 }
 
 export async function createVoice(payload: {

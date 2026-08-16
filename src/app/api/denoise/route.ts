@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { denoiseAudio } from "@/lib/audio/denoise";
+import type { DenoiseStrength } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,7 +18,8 @@ export async function POST(req: NextRequest) {
     if (buf.length === 0) return NextResponse.json({ error: "空音频" }, { status: 400 });
     if (buf.length > MAX_BYTES) return NextResponse.json({ error: "音频过大（上限 25MB）" }, { status: 413 });
 
-    const { buffer, mime, usedFfmpeg } = await denoiseAudio(buf, file.type || "audio/wav");
+    const strength = (String(form.get("strength") || "standard")) as DenoiseStrength;
+    const { buffer, mime, usedFfmpeg } = await denoiseAudio(buf, file.type || "audio/wav", strength);
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {

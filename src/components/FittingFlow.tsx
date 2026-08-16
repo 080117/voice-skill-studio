@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { ApiKeysState, Emotion, VoiceMode, VoiceProfile } from "@/lib/types";
+import type { ApiKeysState, DenoiseStrength, Emotion, VoiceMode, VoiceProfile } from "@/lib/types";
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, truncateAudio, type AudioAnalysis } from "@/lib/audio/denoise-client";
@@ -35,6 +35,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [mode, setMode] = useState<VoiceMode>("reading");
   const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
   const [denoisedBlob, setDenoisedBlob] = useState<Blob | null>(null);
+  const [denoiseStrength, setDenoiseStrength] = useState<DenoiseStrength>("standard");
   /** 多段参考（SiliconFlow 分段拟合）：非空时创建声纹会一次上传多段合并为同一个声纹 */
   const [refSegments, setRefSegments] = useState<Blob[] | null>(null);
   const [usedFfmpeg, setUsedFfmpeg] = useState(false);
@@ -251,7 +252,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     setBusy("正在去噪…");
     setPhase("denoising");
     try {
-      let result = await denoise(sourceBlob);
+      let result = await denoise(sourceBlob, denoiseStrength);
       let finalBlob = result.blob;
       let ff = result.usedFfmpeg;
       if (!ff) {
@@ -261,6 +262,15 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       setUsedFfmpeg(ff);
       setAnalysis(await analyzeBlob(finalBlob).catch(() => null));
       setPhase("denoised");
+      // 分段拟合：用去噪后的音频重新拆段，让克隆参考也是去噪后的
+      if (refSegments && refSegments.length > 1 && mode === "clip" && keys.ttsProvider === "siliconflow") {
+        try {
+          const segs = await splitAudioBlob(finalBlob, maxRefSec);
+          if (segs.length > 1) setRefSegments(segs);
+        } catch {
+          // 保持原段
+        }
+      }
     } catch {
       const fallback = await denoiseClient(sourceBlob).catch(() => sourceBlob);
       setDenoisedBlob(fallback);
@@ -518,6 +528,15 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       {/* 处理按钮 */}
       {sourceBlob && (
         <div className="flex flex-wrap items-center gap-3">
+          <select
+            className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200"
+            value={denoiseStrength}
+            onChange={(e) => setDenoiseStrength(e.target.value as DenoiseStrength)}
+          >
+            <option value="light">去噪：轻</option>
+            <option value="standard">去噪：标准</option>
+            <option value="strong">去噪：强力</option>
+          </select>
           <button onClick={runDenoise} disabled={busy !== ""} className={btn}>
             {phase === "denoising" ? "去噪中…" : "① 自动去噪"}
           </button>
