@@ -53,7 +53,7 @@ function bufToB64(buf: Buffer | Uint8Array): string {
   return Buffer.from(buf).toString("base64");
 }
 
-function blobFromB64(b64: string, mime: string): Blob {
+export function blobFromB64(b64: string, mime: string): Blob {
   const buf = b64ToBuffer(b64);
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
   return new Blob([ab], { type: mime || "audio/wav" });

@@ -82,6 +82,16 @@ export interface ChatResult {
   emotion: string;
 }
 
+/** 用硅基流动 SenseVoice（免费）把参考音频转成文字，提升克隆对齐质量 */
+export async function transcribe(payload: {
+  audioBase64: string;
+  mime: string;
+  tts: TtsConfig;
+}): Promise<string> {
+  const json = await postJson("/api/transcribe", payload, 60_000);
+  return (json?.text ?? "") as string;
+}
+
 export async function chat(payload: {
   messages: { role: "user" | "assistant"; content: string }[];
   voice: VoiceProfile;

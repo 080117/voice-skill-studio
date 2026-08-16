@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { ApiKeysState, DenoiseStrength, Emotion, VoiceMode, VoiceProfile } from "@/lib/types";
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
-import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
+import { denoise, createVoice, tts as ttsApi, transcribe, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, truncateAudio, type AudioAnalysis } from "@/lib/audio/denoise-client";
 import { MAX_MULTI_SEGMENTS, pickBestSegments, sliceAudioSegments, splitAudioBlob } from "@/lib/audio/split-client";
 import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
@@ -36,6 +36,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
   const [denoisedBlob, setDenoisedBlob] = useState<Blob | null>(null);
   const [denoiseStrength, setDenoiseStrength] = useState<DenoiseStrength>("standard");
+  const [autoTranscribe, setAutoTranscribe] = useState(true);
   /** 多段参考（SiliconFlow 分段拟合）：非空时创建声纹会一次上传多段合并为同一个声纹 */
   const [refSegments, setRefSegments] = useState<Blob[] | null>(null);
   const [usedFfmpeg, setUsedFfmpeg] = useState(false);
@@ -282,6 +283,29 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     }
   };
 
+  /** 多段参考逐段转写（限并发），失败段回退占位文本，不阻断流程 */
+  const transcribeSegments = async (blobs: Blob[], maxParallel = 3) => {
+    const tts = keysToTts(keys);
+    const out: { audioBase64: string; mime: string; text?: string }[] = [];
+    let i = 0;
+    const worker = async () => {
+      while (i < blobs.length) {
+        const idx = i++;
+        const b = blobs[idx];
+        const audioBase64 = await blobToBase64(b);
+        const mime = b.type || "audio/wav";
+        try {
+          const text = await transcribe({ audioBase64, mime, tts });
+          out[idx] = { audioBase64, mime, text };
+        } catch {
+          out[idx] = { audioBase64, mime };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(maxParallel, blobs.length) }, () => worker()));
+    return out;
+  };
+
   const createVoiceNow = async () => {
     setError("");
     if (!supportsClone) {
@@ -310,9 +334,15 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       const ref = denoisedBlob ?? sourceBlob;
       // 分段拟合：SiliconFlow 一次上传多段参考，合并为同一个声纹
       if (refSegments && refSegments.length > 1) {
-        const segs = await Promise.all(
-          refSegments.slice(0, MAX_MULTI_SEGMENTS).map(async (b) => ({ audioBase64: await blobToBase64(b), mime: b.type || "audio/wav" })),
-        );
+        const sliced = refSegments.slice(0, MAX_MULTI_SEGMENTS);
+        let segs: { audioBase64: string; mime: string; text?: string }[];
+        if (autoTranscribe && keys.ttsProvider === "siliconflow") {
+          setBusy(`正在转写参考音频（${sliced.length} 段，免费 ASR）…`);
+          segs = await transcribeSegments(sliced);
+        } else {
+          segs = await Promise.all(sliced.map(async (b) => ({ audioBase64: await blobToBase64(b), mime: b.type || "audio/wav" })));
+        }
+        setBusy("正在创建声纹…");
         const profile = await createVoice({
           segments: segs,
           mime: "audio/wav",
@@ -331,11 +361,21 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         throw new Error(`参考音频过长（${refDur.toFixed(0)}s，上限 ${maxRefSec}s）。超长音频会导致服务端超时（HTTP 524），请减少选中片段或换用较短音频。`);
       }
       const audioBase64 = await blobToBase64(ref);
+      let voiceText: string | undefined = mode === "reading" ? PASSAGE : undefined;
+      if (!voiceText && autoTranscribe && keys.ttsProvider === "siliconflow") {
+        setBusy("正在转写参考音频（免费 ASR）…");
+        try {
+          voiceText = await transcribe({ audioBase64, mime: ref.type || "audio/wav", tts: keysToTts(keys) });
+        } catch {
+          voiceText = undefined; // 转写失败则回退占位文本
+        }
+        setBusy("正在创建声纹…");
+      }
       const profile = await createVoice({
         audioBase64,
         mime: ref.type || "audio/wav",
         mode,
-        text: mode === "reading" ? PASSAGE : undefined,
+        text: voiceText,
         tts: keysToTts(keys),
       });
       await putRefAudio(profile.id, ref);
@@ -528,6 +568,15 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       {/* 处理按钮 */}
       {sourceBlob && (
         <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              checked={autoTranscribe}
+              onChange={(e) => setAutoTranscribe(e.target.checked)}
+              className="accent-emerald-500"
+            />
+            自动转写参考音频（免费，提升拟合质量）
+          </label>
           <select
             className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200"
             value={denoiseStrength}
