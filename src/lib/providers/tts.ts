@@ -63,6 +63,8 @@ async function readError(res: Response, tag: string): Promise<string> {
   if (res.status === 401) hint = "（API Key 无效或已过期，请检查是否有多余空格/换行、是否以 sk- 开头）";
   else if (res.status === 403 && (t.includes("Model disabled") || t.includes("30003")))
     hint = "（模型未开通：请到硅基流动控制台完成实名认证，并在「模型广场」搜索该模型点击开通后重试）";
+  else if (res.status === 402 && (t.includes("30001") || t.includes("insufficient")))
+    hint = "（余额不足：请到硅基流动控制台「活动中心→认证专享礼」领取实名送的 ¥16 代金券，并在「余额充值」充 ≥0.01 元激活后重试）";
   return `${tag} 请求失败 HTTP ${res.status}: ${t.slice(0, 300)}${hint}`;
 }
 
