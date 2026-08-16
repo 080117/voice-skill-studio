@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEnergySegments, buildSpeechSegments, MAX_SEGMENT_SEC, parseSilenceDetectOutput } from "./video";
+import { buildEnergySegments, buildSpeechSegments, MAX_SEGMENT_SEC, parseSilenceDetectOutput, pickSegments } from "./video";
 import { pickDominantSlices } from "./merge-segments";
 
 /** 按分段生成 16-bit mono PCM：amp 决定该段响度 */
@@ -135,6 +135,26 @@ describe("video", () => {
     expect(segs[0].end).toBeGreaterThan(23);
     expect(segs[0].end).toBeLessThan(27);
     for (const s of segs) expect(s.end - s.start).toBeLessThanOrEqual(MAX_SEGMENT_SEC + 0.001);
+  });
+
+  it("pickSegments：静音段太粗（连续讲话）时改用能量段，避免 30s 一刀切", () => {
+    const silence = [
+      { start: 0, end: 376 },
+      { start: 376, end: 474 },
+    ];
+    const energy = Array.from({ length: 8 }, (_, i) => ({ start: i * 20, end: i * 20 + 15 }));
+    const picked = pickSegments(silence, energy, true);
+    expect(picked).toBe(energy);
+  });
+
+  it("pickSegments：静音段本身够细时保留静音段", () => {
+    const silence = [
+      { start: 0, end: 10 },
+      { start: 12, end: 30 },
+    ];
+    const energy = [{ start: 0, end: 15 }];
+    const picked = pickSegments(silence, energy, false);
+    expect(picked).toBe(silence);
   });
 
   it("推荐主导片段按时长取前 N", () => {

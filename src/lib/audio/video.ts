@@ -42,8 +42,8 @@ export function buildEnergySegments(
     channels,
     bitsPerSample = 16,
     windowMs = 100,
-    floorPct = 0.05,
-    boost = 1.35,
+    floorPct = 0.1,
+    boost = 1.3,
     minSpeech = 1.0,
     mergeGap = 0.8,
     maxSec = MAX_SEGMENT_SEC,
@@ -240,25 +240,47 @@ export async function extractVideoAudio(input: Buffer): Promise<{ wav: Buffer; d
 }
 
 async function detectSegments(filePath: string, wav: Buffer, durationSec: number): Promise<SpeechSegment[]> {
-  try {
-    // 阈值放宽到 -40dB / 0.4s：更容易在 BGM 间隙切出片段
-    const stderr = await runFfmpegStderr(["-i", filePath, "-vn", "-af", "silencedetect=noise=-40dB:d=0.4", "-f", "null", "-"], Buffer.alloc(0));
-    const silences = parseSilenceDetectOutput(stderr);
-    if (silences.length === 0 && durationSec > 0) {
-      // 找不到静音（BGM/连续讲话）：按响度差切出说话片段，避免固定 30s 一刀切
+    try {
+      // 阈值放宽到 -40dB / 0.4s：更容易在 BGM 间隙切出片段
+      const stderr = await runFfmpegStderr(["-i", filePath, "-vn", "-af", "silencedetect=noise=-40dB:d=0.4", "-f", "null", "-"], Buffer.alloc(0));
+      const silences = parseSilenceDetectOutput(stderr);
+      // 静音路径：按真实停顿切分
+      const silenceSegs = buildSpeechSegments(silences, durationSec);
+      // 能量路径：按响度差切分（连续讲话 / BGM 场景，静音检测常常失效）
       const info = parseWav(wav);
-      if (info) return buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample });
-      return buildSpeechSegments([], durationSec);
+      const energySegs = info
+        ? buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample })
+        : [];
+      // 静音路径是否太粗：停顿太少，或某段连续讲话超过 90s（会被切成固定 30s）
+      let lastEnd = 0;
+      let maxStretch = 0;
+      for (const s of silences) {
+        maxStretch = Math.max(maxStretch, s.start - lastEnd);
+        lastEnd = Math.max(lastEnd, s.end);
+      }
+      maxStretch = Math.max(maxStretch, durationSec - lastEnd);
+      const silenceCoarse = silences.length <= 3 || maxStretch > 90;
+      return pickSegments(silenceSegs, energySegs, silenceCoarse);
+    } catch {
+      const info = parseWav(wav);
+      if (durationSec > 0) {
+        if (info) return buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample });
+        return buildSpeechSegments([], durationSec);
+      }
+      return [];
     }
-    return buildSpeechSegments(silences, durationSec);
-  } catch {
-    const info = parseWav(wav);
-    if (durationSec > 0) {
-      if (info) return buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample });
-      return buildSpeechSegments([], durationSec);
-    }
-    return [];
   }
+
+/** 分段选择：静音路径太粗（停顿太少/讲话跨度超长）时，改用能量段，避免整段被切成固定 30s */
+export function pickSegments(
+  silenceSegs: SpeechSegment[],
+  energySegs: SpeechSegment[],
+  silenceCoarse: boolean,
+  maxSec = MAX_SEGMENT_SEC,
+): SpeechSegment[] {
+  const energyMax = energySegs.reduce((m, s) => Math.max(m, s.end - s.start), 0);
+  if (silenceCoarse && energySegs.length >= 2 && energyMax <= maxSec + 0.01) return energySegs;
+  return silenceSegs;
 }
 
 function runFfmpegStderr(args: string[], input: Buffer, timeoutMs = 300000): Promise<string> {

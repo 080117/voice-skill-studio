@@ -32,7 +32,7 @@ function vadSegments(
   sampleRate: number,
   opts: { windowMs?: number; floorPct?: number; boost?: number; minSpeech?: number; mergeGap?: number } = {},
 ): { segs: Slice[]; rms: number[] } {
-  const { windowMs = 100, floorPct = 0.05, boost = 1.35, minSpeech = 1.0, mergeGap = 0.8 } = opts;
+  const { windowMs = 100, floorPct = 0.1, boost = 1.3, minSpeech = 1.0, mergeGap = 0.8 } = opts;
   const windowLen = Math.max(1, Math.floor((sampleRate * windowMs) / 1000));
   const rms: number[] = [];
   for (let off = 0; off < data.length; off += windowLen) {
