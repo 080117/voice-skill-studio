@@ -18,10 +18,11 @@ export async function denoise(blob: Blob): Promise<DenoiseResult> {
 }
 
 export async function createVoice(payload: {
-  audioBase64: string;
+  audioBase64?: string;
   mime: string;
   mode: "reading" | "clip";
   text?: string;
+  segments?: { audioBase64: string; mime: string }[];
   tts: TtsConfig;
 }): Promise<VoiceProfile> {
   const res = await fetch("/api/voices", {

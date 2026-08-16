@@ -5,6 +5,7 @@ import type { ApiKeysState, Emotion, VoiceMode, VoiceProfile } from "@/lib/types
 import { EMOTIONS, TTS_PROVIDER_META } from "@/lib/types";
 import { denoise, createVoice, tts as ttsApi, keysToTts, keysToLlm } from "@/lib/api";
 import { analyzeBlob, denoiseClient, truncateAudio, type AudioAnalysis } from "@/lib/audio/denoise-client";
+import { sliceAudioSegments, splitAudioBlob } from "@/lib/audio/split-client";
 import { base64ToBlob, blobToBase64, playAudio } from "@/lib/play";
 import { formatSeg, mergeSegments, mergeSegmentsMulti, pickDominantSlices, type Slice } from "@/lib/audio/merge-segments";
 import { getRefAudio, newVoiceId, putRefAudio } from "@/lib/client-store";
@@ -34,6 +35,8 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const [mode, setMode] = useState<VoiceMode>("reading");
   const [sourceBlob, setSourceBlob] = useState<Blob | null>(null);
   const [denoisedBlob, setDenoisedBlob] = useState<Blob | null>(null);
+  /** 多段参考（SiliconFlow 分段拟合）：非空时创建声纹会一次上传多段合并为同一个声纹 */
+  const [refSegments, setRefSegments] = useState<Blob[] | null>(null);
   const [usedFfmpeg, setUsedFfmpeg] = useState(false);
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -137,8 +140,30 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         sources.length === 1
           ? await mergeSegments(sources[0].blob, sources[0].segments, maxRefSec)
           : await mergeSegmentsMulti(sources, maxRefSec);
-      setSourceNotice(merged.capped ? `选中片段合计过长，参考音频已截取为 ${merged.totalSec.toFixed(0)}s（上限 ${maxRefSec}s）` : "");
       await onAudio(merged.blob); // 进入原有 去噪 → 建声纹 → Skill 包 流程
+      const cappedNotice = merged.capped
+        ? `选中片段合计过长，参考音频已截取为 ${merged.totalSec.toFixed(0)}s（上限 ${maxRefSec}s）`
+        : "";
+      if (keys.ttsProvider === "siliconflow" && selectedSegs.length >= 2) {
+        try {
+          const segBlobs: Blob[] = [];
+          for (const [srcIdx, segs] of groups) {
+            const b = videoSources[srcIdx]?.blob;
+            if (!b) continue;
+            segBlobs.push(...(await sliceAudioSegments(b, segs, maxRefSec)));
+          }
+          if (segBlobs.length > 1) {
+            setRefSegments(segBlobs.slice(0, 10));
+            setSourceNotice(`已选 ${segBlobs.length} 段，将分段拟合为同一个声纹（SiliconFlow 多段参考，每段 ≤${maxRefSec}s）`);
+          } else {
+            setSourceNotice(cappedNotice);
+          }
+        } catch {
+          setSourceNotice(cappedNotice);
+        }
+      } else {
+        setSourceNotice(cappedNotice);
+      }
     } catch (e) {
       setVideoError((e as Error).message);
     } finally {
@@ -173,6 +198,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
   const onAudio = async (blob: Blob) => {
     setSourceBlob(blob);
     setDenoisedBlob(null);
+    setRefSegments(null);
     setPhase("idle");
     setError("");
     setProfile(null);
@@ -180,6 +206,21 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     try {
       const dur = await analyzeBlob(blob);
       if (dur && dur.durationSec > maxRefSec) {
+        // 超长素材：硅基流动支持多段参考，拆段做「分段拟合」合并为同一个声纹
+        if (mode === "clip" && keys.ttsProvider === "siliconflow") {
+          try {
+            const segs = await splitAudioBlob(blob, maxRefSec);
+            if (segs.length > 1) {
+              const preview = await truncateAudio(blob, maxRefSec);
+              setSourceBlob(preview);
+              setRefSegments(segs.slice(0, 10));
+              setSourceNotice(`超长素材已拆分为 ${Math.min(segs.length, 10)} 段（每段 ≤${maxRefSec}s），将分段拟合为同一个声纹`);
+              return;
+            }
+          } catch {
+            // VAD 失败则退回截取
+          }
+        }
         const cut = await truncateAudio(blob, maxRefSec);
         setSourceBlob(cut);
         setSourceNotice(`参考音频过长（${dur.durationSec.toFixed(0)}s），已自动截取前 ${maxRefSec}s（避免服务端超时）`);
@@ -242,6 +283,24 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     setPhase("creating");
     try {
       const ref = denoisedBlob ?? sourceBlob;
+      // 分段拟合：SiliconFlow 一次上传多段参考，合并为同一个声纹
+      if (refSegments && refSegments.length > 1) {
+        const segs = await Promise.all(
+          refSegments.slice(0, 10).map(async (b) => ({ audioBase64: await blobToBase64(b), mime: b.type || "audio/wav" })),
+        );
+        const profile = await createVoice({
+          segments: segs,
+          mime: "audio/wav",
+          mode,
+          text: mode === "reading" ? PASSAGE : undefined,
+          tts: keysToTts(keys),
+        });
+        await putRefAudio(profile.id, ref);
+        setProfile(profile);
+        onVoiceCreated(profile);
+        setPhase("created");
+        return;
+      }
       const refDur = analysis?.durationSec ?? (await analyzeBlob(ref).catch(() => null))?.durationSec;
       if (refDur && refDur > maxRefSec + 2) {
         throw new Error(`参考音频过长（${refDur.toFixed(0)}s，上限 ${maxRefSec}s）。超长音频会导致服务端超时（HTTP 524），请减少选中片段或换用较短音频。`);
@@ -434,6 +493,9 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       )}
 
       {sourceNotice && <p className="text-xs text-amber-400">{sourceNotice}</p>}
+      {refSegments && refSegments.length > 1 && (
+        <p className="text-xs text-emerald-500">分段拟合已开启：{refSegments.length} 段参考将合并为同一个声纹。</p>
+      )}
 
       {/* 处理按钮 */}
       {sourceBlob && (

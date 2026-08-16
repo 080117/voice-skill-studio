@@ -114,6 +114,32 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
     expect(form.get("model")).toBe("IndexTeam/IndexTTS-2");
   });
 
+  it("createVoice 传多段 segments：表单含多个 file，合并为一个声纹", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ uri: "speech:vss-multi:abc" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const created = await createVoice({
+      config: { provider: "siliconflow", apiKey: "sk-test" },
+      mime: "audio/wav",
+      mode: "clip",
+      segments: [
+        { audioBase64: Buffer.from("dummy1").toString("base64"), mime: "audio/wav" },
+        { audioBase64: Buffer.from("dummy2").toString("base64"), mime: "audio/wav" },
+      ],
+    });
+    expect(created.voiceId).toBe("speech:vss-multi:abc");
+    const [, init] = mockFetch.mock.calls[0];
+    const form = init!.body as FormData;
+    const files = form.getAll("file");
+    expect(files.length).toBe(2);
+    expect(files.every((f) => f instanceof Blob)).toBe(true);
+    expect(form.get("model")).toBe("FunAudioLLM/CosyVoice2-0.5B");
+    expect(String(form.get("customName"))).toMatch(/^vss-\d+$/);
+  });
+
   it("synthesize 用 IndexTTS-2：模型透传且不注入 CosyVoice 情感指令", async () => {
     mockFetch.mockResolvedValue(new Response(Buffer.from("fake-mp3"), { status: 200 }));
     await synthesize({

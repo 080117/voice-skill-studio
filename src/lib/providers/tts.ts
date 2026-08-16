@@ -8,10 +8,12 @@ import { fetchWithProxy } from "./net";
 export interface CreateVoiceInput {
   config: TtsConfig;
   /** base64（无 data: 前缀） */
-  audioBase64: string;
+  audioBase64?: string;
   mime: string;
   text?: string;
   mode: "reading" | "clip";
+  /** 多段参考（SiliconFlow 一次上传多段合并为同一个声纹）；传了则忽略单段 audioBase64 */
+  segments?: { audioBase64: string; mime: string; text?: string }[];
 }
 
 export interface CreatedVoice {
@@ -117,13 +119,17 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     label: "硅基流动（CosyVoice / IndexTTS-2）",
     supportsClone: true,
     emotionControl: ["instruct_text"],
-    async createVoice({ config, audioBase64, mime, text }) {
+    async createVoice({ config, audioBase64, mime, text, segments }) {
+      const parts = segments && segments.length ? segments : audioBase64 ? [{ audioBase64, mime, text }] : [];
+      if (!parts.length) throw new Error("缺少参考音频");
       const buildForm = () => {
         const form = new FormData();
-        form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
+        parts.forEach((p, i) => {
+          form.append("file", blobFromB64(p.audioBase64, p.mime || "audio/wav"), `reference-${i}.wav`);
+          if (p.text) form.append("text", p.text);
+        });
         form.append("model", config.model || "FunAudioLLM/CosyVoice2-0.5B");
         form.append("customName", `vss-${Date.now()}`);
-        if (text) form.append("text", text);
         return form;
       };
       const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/uploads/audio/voice`, () => ({
@@ -167,6 +173,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     async createVoice({ config, audioBase64, mime }) {
       const key = config.apiKey?.trim() || "";
       if (!key) throw new Error("Fish Audio 未配置 API key：请在「模型 API」面板填写自己的 Fish Audio key");
+      if (!audioBase64) throw new Error("缺少参考音频");
       const buildForm = () => {
         const form = new FormData();
         form.append("type", "tts");
