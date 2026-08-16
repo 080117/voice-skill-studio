@@ -57,6 +57,21 @@ function blobFromB64(b64: string, mime: string): Blob {
   return new Blob([ab], { type: mime || "audio/wav" });
 }
 
+const RETRY_BASE_MS = 300;
+
+/**
+ * 平台抖动（5xx / 429）自动重试：每次重建请求体（FormData 流不可复用），
+ * 命中 5xx 或限流时按 300ms/600ms/900ms 退避重试，最多重试 3 次。
+ */
+async function postWithRetry(url: string, buildInit: () => RequestInit, retries = 3): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchWithProxy(url, buildInit());
+    const transient = res.status >= 500 || res.status === 429;
+    if (!transient || attempt >= retries) return res;
+    await new Promise((r) => setTimeout(r, RETRY_BASE_MS * (attempt + 1)));
+  }
+}
+
 async function readError(res: Response, tag: string): Promise<string> {
   const t = await res.text().catch(() => "");
   let hint = "";
@@ -65,6 +80,7 @@ async function readError(res: Response, tag: string): Promise<string> {
     hint = "（模型未开通：请到硅基流动控制台完成实名认证，并在「模型广场」搜索该模型点击开通后重试）";
   else if (res.status === 402 && (t.includes("30001") || t.includes("insufficient")))
     hint = "（余额不足：请到硅基流动控制台「活动中心→认证专享礼」领取实名送的 ¥16 代金券，并在「余额充值」充 ≥0.01 元激活后重试）";
+  else if (res.status >= 500) hint = "（服务端临时故障/过载：已自动重试仍失败，请稍后再试）";
   return `${tag} 请求失败 HTTP ${res.status}: ${t.slice(0, 300)}${hint}`;
 }
 
@@ -102,16 +118,19 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     supportsClone: true,
     emotionControl: ["instruct_text"],
     async createVoice({ config, audioBase64, mime, text }) {
-      const form = new FormData();
-      form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
-      form.append("model", config.model || "FunAudioLLM/CosyVoice2-0.5B");
-      form.append("customName", `vss-${Date.now()}`);
-      if (text) form.append("text", text);
-      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/uploads/audio/voice`, {
+      const buildForm = () => {
+        const form = new FormData();
+        form.append("file", blobFromB64(audioBase64, mime), "reference.wav");
+        form.append("model", config.model || "FunAudioLLM/CosyVoice2-0.5B");
+        form.append("customName", `vss-${Date.now()}`);
+        if (text) form.append("text", text);
+        return form;
+      };
+      const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/uploads/audio/voice`, () => ({
         method: "POST",
         headers: { Authorization: `Bearer ${config.apiKey}` },
-        body: form,
-      });
+        body: buildForm(),
+      }));
       if (!res.ok) throw new Error(await readError(res, "SiliconFlow 创建声纹"));
       const json = (await res.json()) as any;
       const voiceId = json?.uri ?? json?.voice_id ?? json?.data?.voice_id ?? json?.id;
@@ -123,7 +142,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       // CosyVoice 用 <|endofprompt|> 情感指令；IndexTTS-2 不识别该标记，按文本自然表达即可
       const isCosyVoice = model.includes("CosyVoice");
       const input = isCosyVoice && emotion && emotion !== "平静" ? `${EMOTION_INSTRUCT[emotion]}。<|endofprompt|>${text}` : text;
-      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, {
+      const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.siliconflow.cn/v1")}/audio/speech`, () => ({
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
@@ -133,7 +152,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
           response_format: "mp3",
           speed,
         }),
-      });
+      }));
       if (!res.ok) throw new Error(await readError(res, "SiliconFlow 合成"));
       const bytes = Buffer.from(await res.arrayBuffer());
       return { audioBase64: bufToB64(bytes), mimeType: "audio/mpeg" };
@@ -148,17 +167,20 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     async createVoice({ config, audioBase64, mime }) {
       const key = config.apiKey?.trim() || "";
       if (!key) throw new Error("Fish Audio 未配置 API key：请在「模型 API」面板填写自己的 Fish Audio key");
-      const form = new FormData();
-      form.append("type", "tts");
-      form.append("title", `vss-${Date.now()}`);
-      form.append("train_mode", "fast");
-      form.append("visibility", "private");
-      form.append("voices", blobFromB64(audioBase64, mime), "reference.wav");
-      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/model`, {
+      const buildForm = () => {
+        const form = new FormData();
+        form.append("type", "tts");
+        form.append("title", `vss-${Date.now()}`);
+        form.append("train_mode", "fast");
+        form.append("visibility", "private");
+        form.append("voices", blobFromB64(audioBase64, mime), "reference.wav");
+        return form;
+      };
+      const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/model`, () => ({
         method: "POST",
         headers: { Authorization: `Bearer ${key}` },
-        body: form,
-      });
+        body: buildForm(),
+      }));
       if (!res.ok) throw new Error(await readError(res, "Fish Audio 创建声纹"));
       const json = (await res.json()) as any;
       const voiceId = json?._id ?? json?.voice_id ?? json?.data?.voice_id ?? json?.id;
@@ -168,7 +190,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     async synthesize({ config, voiceId, text }) {
       const key = config.apiKey?.trim() || "";
       if (!key) throw new Error("Fish Audio 未配置 API key：请在「模型 API」面板填写自己的 Fish Audio key");
-      const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, {
+      const res = await postWithRetry(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, () => ({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -176,7 +198,7 @@ const providers: Record<TtsProviderId, TtsProvider> = {
           model: config.model || "s2.1-pro-free",
         },
         body: JSON.stringify({ text, reference_id: voiceId, format: "mp3", chunk_length: 200 }),
-      });
+      }));
       if (!res.ok) throw new Error(await readError(res, "Fish Audio 合成"));
       const bytes = Buffer.from(await res.arrayBuffer());
       return { audioBase64: bufToB64(bytes), mimeType: "audio/mpeg" };

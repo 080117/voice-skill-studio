@@ -127,6 +127,34 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
     expect(body.model).toBe("IndexTeam/IndexTTS-2");
     expect(body.input).toBe("今天天气很好");
   });
+
+  it("synthesize 遇 5xx（50507 等平台抖动）自动重试，最终成功", async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 50507, message: "Request failed: Unknown error." }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 50507, message: "Request failed: Unknown error." }), { status: 500 }))
+      .mockResolvedValueOnce(new Response(Buffer.from("fake-mp3"), { status: 200 }));
+    const out = await synthesize({
+      config: { provider: "siliconflow", apiKey: "sk-test" },
+      voiceId: "speech:vss:abc",
+      text: "你好",
+    });
+    expect(out.mimeType).toBe("audio/mpeg");
+    expect(mockFetch.mock.calls.length).toBe(3);
+  });
+
+  it("synthesize 遇 4xx（402/403）不重试，直接抛错", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: 30001, message: "Sorry, your account balance is insufficient" }), { status: 402 }),
+    );
+    await expect(
+      synthesize({
+        config: { provider: "siliconflow", apiKey: "sk-test" },
+        voiceId: "speech:vss:abc",
+        text: "你好",
+      }),
+    ).rejects.toThrow("SiliconFlow 合成 请求失败 HTTP 402");
+    expect(mockFetch.mock.calls.length).toBe(1);
+  });
 });
 
 describe("fishaudio 适配器（纯 BYOK：只认用户填的 key）", () => {
