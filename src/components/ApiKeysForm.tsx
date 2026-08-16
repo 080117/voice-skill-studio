@@ -130,7 +130,7 @@ export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: 
             </p>
             {keys.ttsProvider === "siliconflow" && (
               <p className="text-xs text-neutral-500">
-                小提示：没账号的话，去 siliconflow.cn 用国内手机号注册，控制台「API 密钥」里建 key；同一把 key 也能填到上方 LLM（同一账号通用）。
+                小提示：首次使用需先在硅基流动控制台完成<b>实名认证</b>，并在「模型广场」把 CosyVoice / IndexTTS-2 点<b>开通</b>；报 30003「Model disabled」就是这个没弄好。同一把 key 也能填到上方 LLM（同一账号通用）。
               </p>
             )}
           </div>
