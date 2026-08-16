@@ -17,13 +17,11 @@ export function ChatBot({
   voices,
   selectedVoice,
   onSelectVoice,
-  ttsBuiltinFish = false,
 }: {
   keys: ApiKeysState;
   voices: VoiceProfile[];
   selectedVoice: VoiceProfile | null;
   onSelectVoice: (v: VoiceProfile | null) => void;
-  ttsBuiltinFish?: boolean;
 }) {
   const [persona, setPersona] = useState("用户的声纹（自然、亲切）");
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -33,7 +31,7 @@ export function ChatBot({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const llmReady = !!keys.llmBaseUrl && !!keys.llmApiKey && !!keys.llmModel;
-  const ttsReady = keys.ttsProvider === "mock" || (keys.ttsProvider === "fishaudio" && !!ttsBuiltinFish) || !!keys.ttsApiKey;
+  const ttsReady = keys.ttsProvider === "mock" || !!keys.ttsApiKey;
 
   const send = async () => {
     const text = input.trim();

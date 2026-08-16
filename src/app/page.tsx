@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import type { ApiKeysState, VoiceProfile } from "@/lib/types";
 import { EMPTY_KEYS } from "@/lib/types";
 import { loadKeys, saveKeys, loadVoices, saveVoices } from "@/lib/client-store";
-import { fetchTtsMeta } from "@/lib/api";
 import { ApiKeysForm } from "@/components/ApiKeysForm";
 import { FittingFlow } from "@/components/FittingFlow";
 import { VoiceLibrary } from "@/components/VoiceLibrary";
@@ -17,12 +16,10 @@ export default function Home() {
   const [voices, setVoices] = useState<VoiceProfile[]>([]);
   const [tab, setTab] = useState<Tab>("fit");
   const [selectedVoice, setSelectedVoice] = useState<VoiceProfile | null>(null);
-  const [ttsBuiltinFish, setTtsBuiltinFish] = useState(false);
 
   useEffect(() => {
     setKeys(loadKeys() ?? EMPTY_KEYS);
     setVoices(loadVoices());
-    fetchTtsMeta().then((m) => setTtsBuiltinFish(!!m?.builtin?.fishaudio));
   }, []);
 
   const handleKeysChange = useCallback((k: ApiKeysState) => {
@@ -59,7 +56,7 @@ export default function Home() {
         </p>
       </header>
 
-      <ApiKeysForm keys={keys} onChange={handleKeysChange} ttsBuiltinFish={ttsBuiltinFish} />
+      <ApiKeysForm keys={keys} onChange={handleKeysChange} />
 
       <nav className="flex gap-2 border-b border-neutral-800">
         {tabs.map((t) => (
@@ -75,13 +72,12 @@ export default function Home() {
         ))}
       </nav>
 
-      {tab === "fit" && <FittingFlow keys={keys} onVoiceCreated={handleVoiceCreated} ttsBuiltinFish={ttsBuiltinFish} />}
+      {tab === "fit" && <FittingFlow keys={keys} onVoiceCreated={handleVoiceCreated} />}
       {tab === "chat" && (
         <ChatBot
           keys={keys}
           voices={voices}
           selectedVoice={selectedVoice}
-          ttsBuiltinFish={ttsBuiltinFish}
           onSelectVoice={setSelectedVoice}
         />
       )}
@@ -99,4 +95,3 @@ export default function Home() {
     </main>
   );
 }
-

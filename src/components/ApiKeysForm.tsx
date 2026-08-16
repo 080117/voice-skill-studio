@@ -26,7 +26,7 @@ function presetIdFor(keys: ApiKeysState): string {
   return RECOMMENDED_LLM.id;
 }
 
-export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: ApiKeysState; onChange: (k: ApiKeysState) => void; ttsBuiltinFish?: boolean }) {
+export function ApiKeysForm({ keys, onChange }: { keys: ApiKeysState; onChange: (k: ApiKeysState) => void }) {
   const [open, setOpen] = useState(false);
   const [showLlmKey, setShowLlmKey] = useState(false);
   const [showTtsKey, setShowTtsKey] = useState(false);
@@ -103,7 +103,7 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
               <input
                 className={inputCls}
                 type={showTtsKey ? "text" : "password"}
-                placeholder={keys.ttsProvider === "fishaudio" && ttsBuiltinFish ? "可留空，用网站内置免费 Fish key" : "TTS API Key（演示模式可留空）"}
+                placeholder="TTS API Key（演示模式可留空）"
                 value={keys.ttsApiKey}
                 onChange={(e) => set({ ttsApiKey: e.target.value })}
               />
@@ -124,11 +124,9 @@ export function ApiKeysForm({ keys, onChange, ttsBuiltinFish = false }: { keys: 
             <p className="text-xs text-neutral-500">
               {keys.ttsProvider === "mock"
                 ? "演示模式：不需要 key，生成测试音验证全流程。"
-                : keys.ttsProvider === "fishaudio" && ttsBuiltinFish
-                  ? "网站已内置免费 Fish key（s2.1-pro-free）：可留空直接使用；填自己的 key 优先。"
-                  : TTS_PROVIDER_META[keys.ttsProvider].supportsClone
-                    ? "该服务商支持上传音频创建声纹，只需填 Key。"
-                    : "该服务商不支持 API 上传克隆：请在控制台先完成声音复刻，再在拟合页输入已有 voice_id。"}
+                : TTS_PROVIDER_META[keys.ttsProvider].supportsClone
+                  ? "该服务商支持上传音频创建声纹，只需填 Key。"
+                  : "该服务商不支持 API 上传克隆：请在控制台先完成声音复刻，再在拟合页输入已有 voice_id。"}
             </p>
             {keys.ttsProvider === "siliconflow" && (
               <p className="text-xs text-neutral-500">

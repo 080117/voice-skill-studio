@@ -129,25 +129,17 @@ describe("siliconflow 适配器（回归：新接口 /v1/uploads/audio/voice）"
   });
 });
 
-describe("fishaudio 适配器（内置 key 兜底 FISH_AUDIO_KEY）", () => {
-  const envKey = "sk-builtin-fish";
-  let savedKey: string | undefined;
+describe("fishaudio 适配器（纯 BYOK：只认用户填的 key）", () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    savedKey = process.env.FISH_AUDIO_KEY;
-  });
-  afterEach(() => {
-    if (savedKey === undefined) delete process.env.FISH_AUDIO_KEY;
-    else process.env.FISH_AUDIO_KEY = savedKey;
   });
 
-  it("createVoice：无 key + 内置 key 存在时用内置 key", async () => {
-    process.env.FISH_AUDIO_KEY = envKey;
+  it("createVoice 用用户 key，走 /model 创建声纹", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ _id: "fa-voice-1" }), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
     const created = await createVoice({
-      config: { provider: "fishaudio", apiKey: "" },
+      config: { provider: "fishaudio", apiKey: "sk-user-own" },
       audioBase64: Buffer.from("dummy").toString("base64"),
       mime: "audio/wav",
       mode: "reading",
@@ -155,14 +147,13 @@ describe("fishaudio 适配器（内置 key 兜底 FISH_AUDIO_KEY）", () => {
     expect(created.voiceId).toBe("fa-voice-1");
     const [url, init] = mockFetch.mock.calls[0];
     expect(String(url)).toContain("/model");
-    expect((init!.headers as Record<string, string>).Authorization).toBe(`Bearer ${envKey}`);
+    expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer sk-user-own");
   });
 
-  it("synthesize：无 key + 内置 key 存在时用内置 key 和默认免费模型", async () => {
-    process.env.FISH_AUDIO_KEY = envKey;
+  it("synthesize 用用户 key 和默认免费模型 s2.1-pro-free", async () => {
     mockFetch.mockResolvedValue(new Response(Buffer.from("fake-mp3"), { status: 200 }));
     const out = await synthesize({
-      config: { provider: "fishaudio", apiKey: "" },
+      config: { provider: "fishaudio", apiKey: "sk-user-own" },
       voiceId: "fa-voice-1",
       text: "你好",
     });
@@ -170,27 +161,11 @@ describe("fishaudio 适配器（内置 key 兜底 FISH_AUDIO_KEY）", () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(String(url)).toContain("/v1/tts");
     const headers = init!.headers as Record<string, string>;
-    expect(headers.Authorization).toBe(`Bearer ${envKey}`);
+    expect(headers.Authorization).toBe("Bearer sk-user-own");
     expect(headers.model).toBe("s2.1-pro-free");
   });
 
-  it("用户 key 优先于内置 key", async () => {
-    process.env.FISH_AUDIO_KEY = envKey;
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ _id: "fa-voice-2" }), { status: 200, headers: { "Content-Type": "application/json" } }),
-    );
-    await createVoice({
-      config: { provider: "fishaudio", apiKey: "sk-user-own" },
-      audioBase64: Buffer.from("dummy").toString("base64"),
-      mime: "audio/wav",
-      mode: "reading",
-    });
-    const [, init] = mockFetch.mock.calls[0];
-    expect((init!.headers as Record<string, string>).Authorization).toBe("Bearer sk-user-own");
-  });
-
-  it("无 key 且无内置 key：抛明确错误", async () => {
-    delete process.env.FISH_AUDIO_KEY;
+  it("无 key：抛明确错误（无内置兜底）", async () => {
     await expect(
       createVoice({
         config: { provider: "fishaudio", apiKey: "" },

@@ -95,18 +95,3 @@ export function keysToLlm(keys: ApiKeysState): LlmConfig | null {
   if (!keys.llmBaseUrl || !keys.llmApiKey || !keys.llmModel) return null;
   return { baseUrl: keys.llmBaseUrl, apiKey: keys.llmApiKey.trim(), model: keys.llmModel };
 }
-
-export interface TtsMeta {
-  builtin: { fishaudio: boolean };
-}
-
-/** 查询服务端配置的内置 TTS key（只返回布尔，不含 key） */
-export async function fetchTtsMeta(): Promise<TtsMeta | null> {
-  try {
-    const res = await fetch("/api/tts/meta");
-    if (!res.ok) return null;
-    return (await res.json()) as TtsMeta;
-  } catch {
-    return null;
-  }
-}

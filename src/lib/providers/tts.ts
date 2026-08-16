@@ -63,11 +63,6 @@ async function readError(res: Response, tag: string): Promise<string> {
   return `${tag} 请求失败 HTTP ${res.status}: ${t.slice(0, 300)}${hint}`;
 }
 
-/** Fish Audio 内置免费 key：服务端 FISH_AUDIO_KEY 环境变量兜底，用户 key 优先 */
-function fishApiKey(config: { apiKey?: string }): string {
-  return config.apiKey?.trim() || process.env.FISH_AUDIO_KEY?.trim() || "";
-}
-
 function minimaxEmotion(e?: Emotion): string | undefined {
   if (!e) return undefined;
   const map: Record<string, string> = {
@@ -146,8 +141,8 @@ const providers: Record<TtsProviderId, TtsProvider> = {
     supportsClone: true,
     emotionControl: ["reference_audio"],
     async createVoice({ config, audioBase64, mime }) {
-      const key = fishApiKey(config);
-      if (!key) throw new Error("Fish Audio 未配置 API key：请填写自己的 key，或由站长配置 FISH_AUDIO_KEY 环境变量");
+      const key = config.apiKey?.trim() || "";
+      if (!key) throw new Error("Fish Audio 未配置 API key：请在「模型 API」面板填写自己的 Fish Audio key");
       const form = new FormData();
       form.append("type", "tts");
       form.append("title", `vss-${Date.now()}`);
@@ -166,8 +161,8 @@ const providers: Record<TtsProviderId, TtsProvider> = {
       return { voiceId, model: config.model || "s2.1-pro-free", emotionControl: ["reference_audio"] };
     },
     async synthesize({ config, voiceId, text }) {
-      const key = fishApiKey(config);
-      if (!key) throw new Error("Fish Audio 未配置 API key：请填写自己的 key，或由站长配置 FISH_AUDIO_KEY 环境变量");
+      const key = config.apiKey?.trim() || "";
+      if (!key) throw new Error("Fish Audio 未配置 API key：请在「模型 API」面板填写自己的 Fish Audio key");
       const res = await fetchWithProxy(`${normalizeBaseUrl(config.baseUrl || "https://api.fish.audio")}/v1/tts`, {
         method: "POST",
         headers: {
