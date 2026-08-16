@@ -418,6 +418,11 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
                     </div>
                   </div>
                 )}
+                {allSegs.length > 0 && (
+                  <p className="text-xs text-neutral-500">
+                    选中片段会合并成一段 ≤{maxRefSec}s 的参考音频，随后进入下方「① 自动去噪 → ② 创建声纹 → 试听」流程。
+                  </p>
+                )}
               </div>
             )}
           </div>

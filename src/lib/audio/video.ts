@@ -16,6 +16,9 @@ export interface Silence {
   end: number;
 }
 
+/** 单段语音上限（秒）：超过则均分，避免 BGM/连续讲话时出现整段超长片段，方便挑选参考音频 */
+export const MAX_SEGMENT_SEC = 30;
+
 /** 解析 ffmpeg silencedetect 输出（stderr），返回静音段 */
 export function parseSilenceDetectOutput(text: string): Silence[] {
   const silences: Silence[] = [];
@@ -56,7 +59,18 @@ export function buildSpeechSegments(silences: Silence[], totalDuration: number, 
       merged.push({ ...seg });
     }
   }
-  return merged;
+
+  // 超长片段切分为 ≤MAX_SEGMENT_SEC 的子段
+  const capped: SpeechSegment[] = [];
+  for (const seg of merged) {
+    let start = seg.start;
+    while (seg.end - start > MAX_SEGMENT_SEC) {
+      capped.push({ start, end: start + MAX_SEGMENT_SEC });
+      start += MAX_SEGMENT_SEC;
+    }
+    if (seg.end - start > 0.001) capped.push({ start, end: seg.end });
+  }
+  return capped;
 }
 
 
@@ -107,14 +121,16 @@ export async function extractVideoAudio(input: Buffer): Promise<{ wav: Buffer; d
 
 async function detectSegments(filePath: string, durationSec: number): Promise<SpeechSegment[]> {
   try {
-    const stderr = await runFfmpegStderr(["-i", filePath, "-vn", "-af", "silencedetect=noise=-35dB:d=0.5", "-f", "null", "-"], Buffer.alloc(0));
+    // 阈值放宽到 -40dB / 0.4s：更容易在 BGM 间隙切出片段
+    const stderr = await runFfmpegStderr(["-i", filePath, "-vn", "-af", "silencedetect=noise=-40dB:d=0.4", "-f", "null", "-"], Buffer.alloc(0));
     const silences = parseSilenceDetectOutput(stderr);
     if (silences.length === 0 && durationSec > 0) {
-      return [{ start: 0, end: durationSec }];
+      // 找不到静音（BGM/连续讲话）：整段按 ≤MAX_SEGMENT_SEC 均分，保证有可选的短片段
+      return buildSpeechSegments([], durationSec);
     }
     return buildSpeechSegments(silences, durationSec);
   } catch {
-    return durationSec > 0 ? [{ start: 0, end: durationSec }] : [];
+    return durationSec > 0 ? buildSpeechSegments([], durationSec) : [];
   }
 }
 
