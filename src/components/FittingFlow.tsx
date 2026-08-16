@@ -70,6 +70,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ urls }),
+        signal: AbortSignal.timeout(180_000),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `解析失败 HTTP ${res.status}`);
@@ -92,7 +93,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
       }
       setSelectedSegs(idx);
     } catch (e) {
-      setVideoError((e as Error).message);
+      setVideoError((e as Error).name === "TimeoutError" ? "视频解析超时（>3 分钟），请重试" : (e as Error).message);
     } finally {
       setVideoBusy(false);
     }
@@ -160,7 +161,7 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
           }
           if (segBlobs.length > 1) {
             setRefSegments(segBlobs);
-            setSourceNotice(`已选 ${allSel.length} 段，自动挑选 ${segBlobs.length} 段最有代表性的做分段拟合（覆盖全片，每段 ≤${maxRefSec}s）`);
+            setSourceNotice(`你选了 ${allSel.length} 段，实际只上传自动挑出的 ${segBlobs.length} 段最有代表性片段（覆盖全片，每段 ≤${maxRefSec}s）`);
           } else {
             setSourceNotice(cappedNotice);
           }
@@ -194,6 +195,14 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
     }
     return offsets;
   }, [videoSources]);
+
+  /** 一键：自动挑出覆盖全片的最有代表性的若干段（不手动勾选） */
+  const autoPickBest = () => {
+    if (!allSegs.length) return;
+    const chosen = pickBestSegments(allSegs.map((x) => x.seg), MAX_MULTI_SEGMENTS);
+    const idx = chosen.map((s) => allSegs.findIndex((x) => x.seg === s)).filter((i) => i >= 0);
+    setSelectedSegs(idx);
+  };
 
   const canProcess = useMemo(() => {
     if (keys.ttsProvider !== "mock" && !keys.ttsApiKey) return false;
@@ -479,6 +488,9 @@ export function FittingFlow({ keys, onVoiceCreated }: { keys: ApiKeysState; onVo
                       </button>
                       <button onClick={() => setSelectedSegs([])} className="text-xs text-neutral-500 hover:underline">
                         清空
+                      </button>
+                      <button onClick={autoPickBest} className="text-xs text-emerald-400 hover:underline">
+                        🎯 自动挑最佳（{MAX_MULTI_SEGMENTS} 段）
                       </button>
                     </div>
                   </div>

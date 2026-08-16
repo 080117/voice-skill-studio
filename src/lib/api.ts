@@ -6,6 +6,29 @@ export interface DenoiseResult {
   usedFfmpeg: boolean;
 }
 
+/** 带超时的 JSON POST：网络异常时给出友好提示，而不是裸抛 "Failed to fetch" */
+async function postJson(url: string, body: unknown, timeoutMs: number): Promise<any> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `请求失败 HTTP ${res.status}`);
+    return json;
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") throw new Error("请求超时，请稍后重试");
+    if (e instanceof TypeError) throw new Error("网络异常：请确认本地服务在运行后重试");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function denoise(blob: Blob): Promise<DenoiseResult> {
   const form = new FormData();
   form.append("file", blob, "input-audio");
@@ -25,14 +48,7 @@ export async function createVoice(payload: {
   segments?: { audioBase64: string; mime: string }[];
   tts: TtsConfig;
 }): Promise<VoiceProfile> {
-  const res = await fetch("/api/voices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `创建声纹失败 HTTP ${res.status}`);
-  return json as VoiceProfile;
+  return (await postJson("/api/voices", payload, 120_000)) as VoiceProfile;
 }
 
 export interface TtsResult {
@@ -49,14 +65,7 @@ export async function tts(payload: {
   emotion?: string;
   autoEmotion?: boolean;
 }): Promise<TtsResult> {
-  const res = await fetch("/api/tts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `合成失败 HTTP ${res.status}`);
-  return json as TtsResult;
+  return (await postJson("/api/tts", payload, 90_000)) as TtsResult;
 }
 
 export interface ChatResult {
@@ -73,14 +82,7 @@ export async function chat(payload: {
   llm: LlmConfig;
   persona?: string;
 }): Promise<ChatResult> {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `机器人请求失败 HTTP ${res.status}`);
-  return json as ChatResult;
+  return (await postJson("/api/chat", payload, 90_000)) as ChatResult;
 }
 
 export function keysToTts(keys: ApiKeysState): TtsConfig {
