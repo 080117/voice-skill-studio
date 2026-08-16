@@ -19,6 +19,100 @@ export interface Silence {
 /** 单段语音上限（秒）：超过则均分，避免 BGM/连续讲话时出现整段超长片段，方便挑选参考音频 */
 export const MAX_SEGMENT_SEC = 30;
 
+/**
+ * 基于短窗 RMS 的语音活动检测：BGM/连续声音没有可检测静音时，
+ * 用「响度明显高于背景」来切出说话片段，而不是按固定时长一刀切。
+ */
+export function buildEnergySegments(
+  pcm: Buffer,
+  opts: {
+    sampleRate: number;
+    channels: number;
+    bitsPerSample?: number;
+    windowMs?: number;
+    floorPct?: number;
+    boost?: number;
+    minSpeech?: number;
+    mergeGap?: number;
+    maxSec?: number;
+  },
+): SpeechSegment[] {
+  const {
+    sampleRate,
+    channels,
+    bitsPerSample = 16,
+    windowMs = 200,
+    floorPct = 0.15,
+    boost = 1.6,
+    minSpeech = 1.0,
+    mergeGap = 0.8,
+    maxSec = MAX_SEGMENT_SEC,
+  } = opts;
+  const bytesPerSample = bitsPerSample / 8;
+  const step = Math.max(1, Math.floor(channels * bytesPerSample));
+  const frameBytes = Math.max(step, Math.floor(sampleRate * channels * bytesPerSample * (windowMs / 1000)));
+
+  // 1) 逐窗计算 RMS
+  const rms: number[] = [];
+  for (let off = 0; off + step <= pcm.length; off += frameBytes) {
+    let sum = 0;
+    let n = 0;
+    const end = Math.min(pcm.length, off + frameBytes);
+    for (let i = off; i + bytesPerSample <= end; i += step) {
+      const s = pcm.readInt16LE(i) / 32768;
+      sum += s * s;
+      n++;
+    }
+    rms.push(n > 0 ? Math.sqrt(sum / n) : 0);
+  }
+  if (rms.length === 0) return [];
+
+  // 2) 以低分位 RMS 作为背景底噪，阈值 = max(底噪*boost, 绝对下限)
+  const sorted = [...rms].sort((a, b) => a - b);
+  const floor = sorted[Math.min(sorted.length - 1, Math.floor(rms.length * floorPct))] ?? 0;
+  const threshold = Math.max(floor * boost, 0.004);
+
+  // 3) 标记活跃窗 → 分组为语音段
+  const windowSec = windowMs / 1000;
+  const segs: SpeechSegment[] = [];
+  let start = -1;
+  for (let i = 0; i < rms.length; i++) {
+    const t = i * windowSec;
+    if (rms[i] > threshold) {
+      if (start < 0) start = t;
+    } else if (start >= 0) {
+      if (t - start >= minSpeech) segs.push({ start, end: t });
+      start = -1;
+    }
+  }
+  if (start >= 0 && rms.length * windowSec - start >= minSpeech) {
+    segs.push({ start, end: rms.length * windowSec });
+  }
+
+  // 4) 合并过近、切分超长
+  const merged: SpeechSegment[] = [];
+  for (const seg of segs) {
+    const last = merged[merged.length - 1];
+    if (last && seg.start - last.end < mergeGap) last.end = Math.max(last.end, seg.end);
+    else merged.push({ ...seg });
+  }
+  const capped: SpeechSegment[] = [];
+  for (const seg of merged) {
+    let s0 = seg.start;
+    while (seg.end - s0 > maxSec) {
+      capped.push({ start: s0, end: s0 + maxSec });
+      s0 += maxSec;
+    }
+    if (seg.end - s0 > 0.001) capped.push({ start: s0, end: seg.end });
+  }
+  // 响度没有起伏（如纯 BGM 全程均匀）时切不出段：退回均匀分块，保证有可选的短片段
+  if (capped.length === 0) {
+    const total = rms.length * windowSec;
+    return total > 0 ? buildSpeechSegments([], total) : [];
+  }
+  return capped;
+}
+
 /** 解析 ffmpeg silencedetect 输出（stderr），返回静音段 */
 export function parseSilenceDetectOutput(text: string): Silence[] {
   const silences: Silence[] = [];
@@ -112,25 +206,32 @@ export async function extractVideoAudio(input: Buffer): Promise<{ wav: Buffer; d
     const durationSec = info?.durationSec ?? 0;
 
     // 2) silencedetect 找静音 → 语音分段
-    const segments = await detectSegments(tmpFile, durationSec);
+    const segments = await detectSegments(tmpFile, wav, durationSec);
     return { wav, durationSec, segments };
   } finally {
     try { rmSync(tmpFile, { force: true }); } catch { /* ignore */ }
   }
 }
 
-async function detectSegments(filePath: string, durationSec: number): Promise<SpeechSegment[]> {
+async function detectSegments(filePath: string, wav: Buffer, durationSec: number): Promise<SpeechSegment[]> {
   try {
     // 阈值放宽到 -40dB / 0.4s：更容易在 BGM 间隙切出片段
     const stderr = await runFfmpegStderr(["-i", filePath, "-vn", "-af", "silencedetect=noise=-40dB:d=0.4", "-f", "null", "-"], Buffer.alloc(0));
     const silences = parseSilenceDetectOutput(stderr);
     if (silences.length === 0 && durationSec > 0) {
-      // 找不到静音（BGM/连续讲话）：整段按 ≤MAX_SEGMENT_SEC 均分，保证有可选的短片段
+      // 找不到静音（BGM/连续讲话）：按响度差切出说话片段，避免固定 30s 一刀切
+      const info = parseWav(wav);
+      if (info) return buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample });
       return buildSpeechSegments([], durationSec);
     }
     return buildSpeechSegments(silences, durationSec);
   } catch {
-    return durationSec > 0 ? buildSpeechSegments([], durationSec) : [];
+    const info = parseWav(wav);
+    if (durationSec > 0) {
+      if (info) return buildEnergySegments(wav, { sampleRate: info.sampleRate, channels: info.channels, bitsPerSample: info.bitsPerSample });
+      return buildSpeechSegments([], durationSec);
+    }
+    return [];
   }
 }
 
