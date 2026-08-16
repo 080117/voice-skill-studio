@@ -26,13 +26,13 @@ async function decodeOnce(blob: Blob): Promise<AudioBuffer> {
   }
 }
 
-/** 短窗 RMS 语音活动检测，返回语音段（秒） */
+/** 短窗 RMS 语音活动检测，返回语音段（秒）与逐窗 rms（供低谷切分用） */
 function vadSegments(
   data: Float32Array,
   sampleRate: number,
   opts: { windowMs?: number; floorPct?: number; boost?: number; minSpeech?: number; mergeGap?: number } = {},
-): Slice[] {
-  const { windowMs = 200, floorPct = 0.15, boost = 1.6, minSpeech = 1.0, mergeGap = 0.8 } = opts;
+): { segs: Slice[]; rms: number[] } {
+  const { windowMs = 100, floorPct = 0.05, boost = 1.35, minSpeech = 1.0, mergeGap = 0.8 } = opts;
   const windowLen = Math.max(1, Math.floor((sampleRate * windowMs) / 1000));
   const rms: number[] = [];
   for (let off = 0; off < data.length; off += windowLen) {
@@ -45,7 +45,7 @@ function vadSegments(
     }
     rms.push(n > 0 ? Math.sqrt(sum / n) : 0);
   }
-  if (rms.length === 0) return [];
+  if (rms.length === 0) return { segs: [], rms };
   const sorted = [...rms].sort((a, b) => a - b);
   const floor = sorted[Math.min(rms.length - 1, Math.floor(rms.length * floorPct))] ?? 0;
   const threshold = Math.max(floor * boost, 0.004);
@@ -68,7 +68,36 @@ function vadSegments(
     if (last && s.start - last.end < mergeGap) last.end = Math.max(last.end, s.end);
     else merged.push({ ...s });
   }
-  return merged;
+  return { segs: merged, rms };
+}
+
+/** 长语音段在 [start+minChunk, start+maxSec] 内找「明显低于平均」的窗口作为切点（否则按 maxSec 切） */
+function splitLongAtQuiet(segs: Slice[], rms: number[], windowSec: number, maxSec: number, minChunkSec = 8): Slice[] {
+  const out: Slice[] = [];
+  for (const seg of segs) {
+    let start = seg.start;
+    while (seg.end - start > maxSec) {
+      const cutAtMax = Math.min(start + maxSec, seg.end);
+      const iStart = Math.max(0, Math.ceil((start + minChunkSec) / windowSec));
+      const iEnd = Math.min(rms.length, Math.floor(cutAtMax / windowSec));
+      let cutIdx = -1;
+      let minRms = Infinity;
+      let sum = 0;
+      for (let i = iStart; i < iEnd; i++) {
+        sum += rms[i];
+        if (rms[i] < minRms) {
+          minRms = rms[i];
+          cutIdx = i;
+        }
+      }
+      const avg = iEnd > iStart ? sum / (iEnd - iStart) : Infinity;
+      const cut = minRms < avg * 0.85 && cutIdx >= 0 ? Math.max(start + minChunkSec, Math.min(cutAtMax, cutIdx * windowSec)) : cutAtMax;
+      out.push({ start, end: cut });
+      start = cut;
+    }
+    if (seg.end - start > 0.05) out.push({ start, end: seg.end });
+  }
+  return out;
 }
 
 /** 把一段音频渲染成 ≤maxSec 的 24k mono wav Blob（从 startSec 开始） */
@@ -104,23 +133,15 @@ export async function splitAudioBlob(blob: Blob, maxSec: number, opts: SplitOpti
   const decoded = await decodeOnce(blob);
   const data = decoded.getChannelData(0);
   const sr = decoded.sampleRate;
-  let segs = vadSegments(data, sr, vadOpts);
+  const windowMs = vadOpts.windowMs ?? 100;
+  const { segs: vsegs, rms } = vadSegments(data, sr, { ...vadOpts, windowMs });
+  let segs = vsegs;
   if (!segs.length) {
-    // 纯 BGM / 均匀响度：均匀分块兜底
-    segs = [];
-    const total = decoded.duration;
-    for (let t = 0; t < total; t += maxSec) segs.push({ start: t, end: Math.min(total, t + maxSec) });
+    // 纯 BGM / 均匀响度：整段交给低谷切分，纯均匀才切成 maxSec 块
+    segs = [{ start: 0, end: decoded.duration }];
   }
-  // 每段 ≤ maxSec
-  const capped: Slice[] = [];
-  for (const s of segs) {
-    let a = s.start;
-    while (s.end - a > maxSec) {
-      capped.push({ start: a, end: a + maxSec });
-      a += maxSec;
-    }
-    if (s.end - a > 0.3) capped.push({ start: a, end: s.end });
-  }
+  // 每段 ≤ maxSec：优先在响度低谷处切，避免固定 30s 一刀切
+  const capped = splitLongAtQuiet(segs, rms, windowMs / 1000, maxSec);
   const chosen = capped.slice(0, maxSegments);
   const out: Blob[] = [];
   for (const s of chosen) {

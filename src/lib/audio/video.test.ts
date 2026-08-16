@@ -106,14 +106,35 @@ describe("video", () => {
       sampleRate: 24000,
       channels: 1,
       bitsPerSample: 16,
-      windowMs: 200,
-      floorPct: 0.15,
-      boost: 1.6,
+      windowMs: 100,
+      floorPct: 0.05,
+      boost: 1.35,
     });
     expect(segs.length).toBe(3); // 70s → 30/30/10
     for (const s of segs) expect(s.end - s.start).toBeLessThanOrEqual(MAX_SEGMENT_SEC + 0.001);
     expect(segs[0].start).toBeCloseTo(0, 1);
     expect(segs[2].end).toBeCloseTo(70, 1);
+  });
+
+  it("buildEnergySegments 长段切点落在响度低谷（不固定 30s）", () => {
+    const pcm = makePcm([
+      { sec: 25, amp: 0.3 }, // 说话
+      { sec: 1, amp: 0.05 }, // 明显低谷
+      { sec: 44, amp: 0.3 }, // 继续说话
+    ]);
+    const segs = buildEnergySegments(pcm, {
+      sampleRate: 24000,
+      channels: 1,
+      bitsPerSample: 16,
+      windowMs: 100,
+      floorPct: 0.05,
+      boost: 1.35,
+    });
+    expect(segs.length).toBeGreaterThanOrEqual(2);
+    // 第一段应结束在低谷附近（约 25s），而不是固定 30s
+    expect(segs[0].end).toBeGreaterThan(23);
+    expect(segs[0].end).toBeLessThan(27);
+    for (const s of segs) expect(s.end - s.start).toBeLessThanOrEqual(MAX_SEGMENT_SEC + 0.001);
   });
 
   it("推荐主导片段按时长取前 N", () => {

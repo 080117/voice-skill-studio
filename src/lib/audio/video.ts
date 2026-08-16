@@ -41,9 +41,9 @@ export function buildEnergySegments(
     sampleRate,
     channels,
     bitsPerSample = 16,
-    windowMs = 200,
-    floorPct = 0.15,
-    boost = 1.6,
+    windowMs = 100,
+    floorPct = 0.05,
+    boost = 1.35,
     minSpeech = 1.0,
     mergeGap = 0.8,
     maxSec = MAX_SEGMENT_SEC,
@@ -67,7 +67,7 @@ export function buildEnergySegments(
   }
   if (rms.length === 0) return [];
 
-  // 2) 以低分位 RMS 作为背景底噪，阈值 = max(底噪*boost, 绝对下限)
+  // 2) 以极低分位 RMS 作为安静底噪，阈值 = max(底噪*boost, 绝对下限)
   const sorted = [...rms].sort((a, b) => a - b);
   const floor = sorted[Math.min(sorted.length - 1, Math.floor(rms.length * floorPct))] ?? 0;
   const threshold = Math.max(floor * boost, 0.004);
@@ -89,28 +89,54 @@ export function buildEnergySegments(
     segs.push({ start, end: rms.length * windowSec });
   }
 
-  // 4) 合并过近、切分超长
+  // 4) 合并过近
   const merged: SpeechSegment[] = [];
   for (const seg of segs) {
     const last = merged[merged.length - 1];
     if (last && seg.start - last.end < mergeGap) last.end = Math.max(last.end, seg.end);
     else merged.push({ ...seg });
   }
-  const capped: SpeechSegment[] = [];
-  for (const seg of merged) {
-    let s0 = seg.start;
-    while (seg.end - s0 > maxSec) {
-      capped.push({ start: s0, end: s0 + maxSec });
-      s0 += maxSec;
-    }
-    if (seg.end - s0 > 0.001) capped.push({ start: s0, end: seg.end });
-  }
+  // 5) 长段在「响度低谷」处切分（而不是固定 30s 一刀切）
+  const capped = splitLongAtQuiet(merged, rms, windowMs / 1000, maxSec);
   // 响度没有起伏（如纯 BGM 全程均匀）时切不出段：退回均匀分块，保证有可选的短片段
   if (capped.length === 0) {
-    const total = rms.length * windowSec;
-    return total > 0 ? buildSpeechSegments([], total) : [];
+    const total = rms.length * (windowMs / 1000);
+    if (total > 0) {
+      // 整段交给低谷切分：有起伏处落刀，纯均匀才切成 30s 块
+      return splitLongAtQuiet([{ start: 0, end: total }], rms, windowMs / 1000, maxSec);
+    }
+    return [];
   }
   return capped;
+}
+
+/** 长语音段在 [start+minChunk, start+maxSec] 内找「明显低于平均」的窗口作为切点（否则按 maxSec 切） */
+function splitLongAtQuiet(segs: SpeechSegment[], rms: number[], windowSec: number, maxSec: number, minChunkSec = 8): SpeechSegment[] {
+  const out: SpeechSegment[] = [];
+  for (const seg of segs) {
+    let start = seg.start;
+    while (seg.end - start > maxSec) {
+      const cutAtMax = Math.min(start + maxSec, seg.end);
+      const iStart = Math.max(0, Math.ceil((start + minChunkSec) / windowSec));
+      const iEnd = Math.min(rms.length, Math.floor(cutAtMax / windowSec));
+      let cutIdx = -1;
+      let minRms = Infinity;
+      let sum = 0;
+      for (let i = iStart; i < iEnd; i++) {
+        sum += rms[i];
+        if (rms[i] < minRms) {
+          minRms = rms[i];
+          cutIdx = i;
+        }
+      }
+      const avg = iEnd > iStart ? sum / (iEnd - iStart) : Infinity;
+      const cut = minRms < avg * 0.85 && cutIdx >= 0 ? Math.max(start + minChunkSec, Math.min(cutAtMax, cutIdx * windowSec)) : cutAtMax;
+      out.push({ start, end: cut });
+      start = cut;
+    }
+    if (seg.end - start > 0.05) out.push({ start, end: seg.end });
+  }
+  return out;
 }
 
 /** 解析 ffmpeg silencedetect 输出（stderr），返回静音段 */
